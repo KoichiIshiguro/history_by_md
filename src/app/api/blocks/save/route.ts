@@ -72,16 +72,36 @@ export async function POST(request: NextRequest) {
   if (tagId) {
     // Tag page save: blocks belong directly to a tag page
     const saveTransaction = db.transaction(() => {
+      // Delete existing page blocks and their block_tags
+      const existing = db.prepare("SELECT id FROM blocks WHERE user_id = ? AND tag_id = ?").all(user.id, tagId) as { id: string }[];
+      for (const b of existing) {
+        db.prepare("DELETE FROM block_tags WHERE block_id = ?").run(b.id);
+      }
       db.prepare("DELETE FROM blocks WHERE user_id = ? AND tag_id = ?").run(user.id, tagId);
 
       const insertBlock = db.prepare(
         `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, tag_id)
          VALUES (?, ?, '', ?, ?, ?, ?)`
       );
+      const findTag = db.prepare("SELECT id FROM tags WHERE name = ? AND user_id = ?");
+      const insertTag = db.prepare("INSERT OR IGNORE INTO tags (id, name, user_id) VALUES (?, ?, ?)");
+      const insertBlockTag = db.prepare("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)");
 
       for (const block of blocks) {
         const blockId = block.id || crypto.randomUUID();
         insertBlock.run(blockId, user.id, block.content, block.indent_level, block.sort_order, tagId);
+
+        // Extract and create tags from content
+        const tagNames = extractTags(block.content);
+        for (const tagName of tagNames) {
+          let tag = findTag.get(tagName, user.id) as { id: string } | undefined;
+          if (!tag) {
+            const newTagId = crypto.randomUUID();
+            insertTag.run(newTagId, tagName, user.id);
+            tag = { id: newTagId };
+          }
+          insertBlockTag.run(blockId, tag.id);
+        }
       }
     });
     saveTransaction();

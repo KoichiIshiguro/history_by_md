@@ -198,7 +198,6 @@ export default function BlockEditor({
   const saveBlocks = useCallback(
     async (updatedBlocks: Block[]) => {
       if (viewMode === "tag" && selectedTagId) {
-        // Save page blocks via bulk save
         await fetch("/api/blocks/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -232,12 +231,39 @@ export default function BlockEditor({
     [viewMode, selectedDate, selectedTagId, onDataChange]
   );
 
+  // Save a single ref block via PUT (for editing date-referenced blocks in tag view)
+  const saveRefBlock = useCallback(
+    async (block: Block) => {
+      await fetch("/api/blocks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: block.id,
+          content: block.content,
+          indent_level: block.indent_level,
+          sort_order: block.sort_order,
+        }),
+      });
+      onDataChange();
+    },
+    [onDataChange]
+  );
+
   const debouncedSave = useCallback(
     (updatedBlocks: Block[]) => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => saveBlocks(updatedBlocks), 800);
     },
     [saveBlocks]
+  );
+
+  const refSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const debouncedRefSave = useCallback(
+    (block: Block) => {
+      if (refSaveTimeoutRef.current) clearTimeout(refSaveTimeoutRef.current);
+      refSaveTimeoutRef.current = setTimeout(() => saveRefBlock(block), 800);
+    },
+    [saveRefBlock]
   );
 
   const clearSelection = useCallback(() => {
@@ -375,6 +401,39 @@ export default function BlockEditor({
     }, 0);
   };
 
+  const startRefEditing = (block: Block) => {
+    if (selectedBlockIds.size > 0) return;
+    setEditingBlockId(block.id);
+    setEditContent(block.content);
+    setShowSuggestions(false);
+    setTimeout(() => {
+      const el = textareaRefs.current.get(block.id);
+      if (el) el.focus();
+    }, 0);
+  };
+
+  const handleRefKeyDown = (
+    e: KeyboardEvent<HTMLTextAreaElement>,
+    block: Block,
+    _blockIndex: number
+  ) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    // Tag suggestions in ref blocks
+    if (showSuggestions) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setSelectedSuggestion((p) => Math.min(p + 1, tagSuggestions.length - 1)); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setSelectedSuggestion((p) => Math.max(p - 1, 0)); return; }
+      if (e.key === "Tab" || e.key === "Enter") { if (tagSuggestions[selectedSuggestion]) { e.preventDefault(); applySuggestion(tagSuggestions[selectedSuggestion].name); return; } }
+      if (e.key === "Escape") { setShowSuggestions(false); return; }
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const newIndent = e.shiftKey ? Math.max(0, block.indent_level - 1) : block.indent_level + 1;
+      const updatedRef = { ...block, indent_level: newIndent, content: editContent };
+      setRefBlocks(refBlocks.map((b) => b.id === block.id ? updatedRef : b));
+      debouncedRefSave(updatedRef);
+    }
+  };
+
   const startEditing = (block: Block) => {
     if (selectedBlockIds.size > 0) return; // Don't enter edit mode during selection
     setEditingBlockId(block.id);
@@ -388,6 +447,16 @@ export default function BlockEditor({
 
   const finishEditing = () => {
     if (!editingBlockId) return;
+    // Check if it's a ref block
+    const refBlock = refBlocks.find((b) => b.id === editingBlockId);
+    if (refBlock) {
+      const updatedRef = { ...refBlock, content: editContent };
+      setRefBlocks(refBlocks.map((b) => b.id === editingBlockId ? updatedRef : b));
+      setEditingBlockId(null);
+      setShowSuggestions(false);
+      debouncedRefSave(updatedRef);
+      return;
+    }
     const updated = blocks.map((b) =>
       b.id === editingBlockId ? { ...b, content: editContent } : b
     );
@@ -694,17 +763,32 @@ export default function BlockEditor({
                       </span>
                     </h2>
                     <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-                      {dateBlocks.map((block) => (
-                        <div
-                          key={block.id}
-                          className="py-0.5 text-sm text-gray-600"
-                          style={{ paddingLeft: `${block.indent_level * 24}px` }}
-                        >
-                          {block.content
-                            ? renderContent(block.content, onTagClick, onDateClick, allTags)
-                            : "\u00A0"}
-                        </div>
-                      ))}
+                      {dateBlocks.map((block) => {
+                        const refIndex = refBlocks.indexOf(block);
+                        return (
+                          <BlockLine
+                            key={block.id}
+                            block={block}
+                            blockIndex={refIndex}
+                            isEditing={editingBlockId === block.id}
+                            isSelected={false}
+                            editContent={editContent}
+                            allTags={allTags}
+                            showSuggestions={showSuggestions && editingBlockId === block.id}
+                            tagSuggestions={tagSuggestions}
+                            selectedSuggestion={selectedSuggestion}
+                            setTextareaRef={setTextareaRef}
+                            onStartEditing={startRefEditing}
+                            onEditContentChange={handleContentChange}
+                            onFinishEditing={finishEditing}
+                            onKeyDown={handleRefKeyDown}
+                            onTagClick={onTagClick}
+                            onDateClick={onDateClick}
+                            onApplySuggestion={applySuggestion}
+                            onBlockMouseDown={() => {}}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
