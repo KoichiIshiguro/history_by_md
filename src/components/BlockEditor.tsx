@@ -41,7 +41,7 @@ interface Block {
   source_page_id?: string;
 }
 
-interface PageInfo { id: string; name: string; parent_id?: string | null; ref_count?: number; }
+interface PageInfo { id: string; name: string; parent_id?: string | null; ref_count?: number; full_path?: string; }
 interface TagInfo { id: string; name: string; block_count?: number; }
 
 interface Props {
@@ -63,10 +63,11 @@ interface Props {
 function preprocessCustomSyntax(content: string, allPages: PageInfo[], allTags: TagInfo[]): string {
   let result = content;
 
-  // {{page ref}} → HTML span
+  // {{page/path}} → HTML span
   result = result.replace(/\{\{([^}]+)\}\}/g, (_match, pageName: string) => {
     const trimmed = pageName.trim();
-    const page = allPages.find((p) => p.name === trimmed);
+    // Match by full_path first, then by name for backwards compat
+    const page = allPages.find((p) => p.full_path === trimmed) || allPages.find((p) => p.name === trimmed);
     const dataId = page ? page.id : "";
     return `<span class="page-link" data-page-id="${dataId}" data-page-name="${trimmed}">${trimmed}</span>`;
   });
@@ -431,7 +432,11 @@ export default function BlockEditor({
     const pageMatch = value.match(/\{\{([^}]*)$/);
     if (pageMatch) {
       const q = pageMatch[1].toLowerCase();
-      const items = allPages.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 5);
+      // Search by full_path and name, show full_path in suggestions
+      const items = allPages
+        .filter((p) => (p.full_path || p.name).toLowerCase().includes(q) || p.name.toLowerCase().includes(q))
+        .map((p) => ({ id: p.id, name: p.full_path || p.name }))
+        .slice(0, 8);
       setSuggestions({ type: "page", items }); setShowSuggestions(items.length > 0); setSelectedSuggestion(0);
       return;
     }

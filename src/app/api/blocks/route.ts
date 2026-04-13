@@ -159,11 +159,45 @@ function extractTags(content: string): string[] {
   return matches.map((m) => m.slice(1));
 }
 
-// Extract {{page}} references from content
+// Extract {{path/to/page}} references from content
 function extractPageRefs(content: string): string[] {
   const matches = content.match(/\{\{([^}]+)\}\}/g);
   if (!matches) return [];
   return matches.map((m) => m.slice(2, -2).trim());
+}
+
+// Resolve page path to ID, creating pages along the way as needed
+function resolvePageByPath(db: any, userId: string, fullPath: string): { id: string } {
+  const parts = fullPath.split("/").map((p) => p.trim()).filter(Boolean);
+  let parentId: string | null = null;
+
+  const findByNameAndParent = db.prepare(
+    "SELECT id FROM pages WHERE name = ? AND user_id = ? AND parent_id IS ?"
+  );
+  const findByNameAndParentId = db.prepare(
+    "SELECT id FROM pages WHERE name = ? AND user_id = ? AND parent_id = ?"
+  );
+  const insertPageStmt = db.prepare(
+    "INSERT OR IGNORE INTO pages (id, name, user_id, parent_id, sort_order) VALUES (?, ?, ?, ?, 0)"
+  );
+
+  let pageId = "";
+  for (const part of parts) {
+    let found: { id: string } | undefined;
+    if (parentId === null) {
+      found = findByNameAndParent.get(part, userId, null) as { id: string } | undefined;
+    } else {
+      found = findByNameAndParentId.get(part, userId, parentId) as { id: string } | undefined;
+    }
+    if (found) {
+      pageId = found.id;
+    } else {
+      pageId = crypto.randomUUID();
+      insertPageStmt.run(pageId, part, userId, parentId);
+    }
+    parentId = pageId;
+  }
+  return { id: pageId };
 }
 
 function recomputeLinksForDate(db: any, userId: string, date: string) {
@@ -177,8 +211,6 @@ function recomputeLinksForDate(db: any, userId: string, date: string) {
   const findTag = db.prepare("SELECT id FROM tags WHERE name = ? AND user_id = ?");
   const insertTag = db.prepare("INSERT OR IGNORE INTO tags (id, name, user_id) VALUES (?, ?, ?)");
   const insertBlockTag = db.prepare("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)");
-  const findPage = db.prepare("SELECT id FROM pages WHERE name = ? AND user_id = ?");
-  const insertPage = db.prepare("INSERT OR IGNORE INTO pages (id, name, user_id, sort_order) VALUES (?, ?, ?, 0)");
   const insertBlockPage = db.prepare("INSERT OR IGNORE INTO block_pages (block_id, page_id) VALUES (?, ?)");
 
   for (const block of allBlocks) {
@@ -209,13 +241,8 @@ function recomputeLinksForDate(db: any, userId: string, date: string) {
       insertBlockTag.run(block.id, tag.id);
     }
 
-    for (const pageName of allPages) {
-      let page = findPage.get(pageName, userId) as { id: string } | undefined;
-      if (!page) {
-        const pageId = crypto.randomUUID();
-        insertPage.run(pageId, pageName, userId);
-        page = { id: pageId };
-      }
+    for (const pagePath of allPages) {
+      const page = resolvePageByPath(db, userId, pagePath);
       insertBlockPage.run(block.id, page.id);
     }
 

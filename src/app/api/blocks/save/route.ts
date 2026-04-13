@@ -8,10 +8,45 @@ function extractTags(content: string): string[] {
   return matches.map((m) => m.slice(1));
 }
 
+// Extracts {{path/to/page}} references — returns the full path strings
 function extractPageRefs(content: string): string[] {
   const matches = content.match(/\{\{([^}]+)\}\}/g);
   if (!matches) return [];
   return matches.map((m) => m.slice(2, -2).trim());
+}
+
+// Resolve a page path like "parent/child/grandchild" to a page ID, creating pages as needed
+function resolvePageByPath(db: any, userId: string, fullPath: string): { id: string } {
+  const parts = fullPath.split("/").map((p) => p.trim()).filter(Boolean);
+  let parentId: string | null = null;
+
+  const findByNameAndParent = db.prepare(
+    "SELECT id FROM pages WHERE name = ? AND user_id = ? AND parent_id IS ?"
+  );
+  const findByNameAndParentId = db.prepare(
+    "SELECT id FROM pages WHERE name = ? AND user_id = ? AND parent_id = ?"
+  );
+  const insertPage = db.prepare(
+    "INSERT OR IGNORE INTO pages (id, name, user_id, parent_id, sort_order) VALUES (?, ?, ?, ?, 0)"
+  );
+
+  let pageId = "";
+  for (const part of parts) {
+    let found: { id: string } | undefined;
+    if (parentId === null) {
+      found = findByNameAndParent.get(part, userId, null) as { id: string } | undefined;
+    } else {
+      found = findByNameAndParentId.get(part, userId, parentId) as { id: string } | undefined;
+    }
+    if (found) {
+      pageId = found.id;
+    } else {
+      pageId = crypto.randomUUID();
+      insertPage.run(pageId, part, userId, parentId);
+    }
+    parentId = pageId;
+  }
+  return { id: pageId };
 }
 
 function computeBlockLinks(blocks: Array<{ content: string; indent_level: number }>) {
@@ -66,8 +101,6 @@ export async function POST(request: NextRequest) {
   const findTag = db.prepare("SELECT id FROM tags WHERE name = ? AND user_id = ?");
   const insertTag = db.prepare("INSERT OR IGNORE INTO tags (id, name, user_id) VALUES (?, ?, ?)");
   const insertBlockTag = db.prepare("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)");
-  const findPage = db.prepare("SELECT id FROM pages WHERE name = ? AND user_id = ?");
-  const insertPage = db.prepare("INSERT OR IGNORE INTO pages (id, name, user_id, sort_order) VALUES (?, ?, ?, 0)");
   const insertBlockPage = db.prepare("INSERT OR IGNORE INTO block_pages (block_id, page_id) VALUES (?, ?)");
 
   if (pageId) {
@@ -95,9 +128,8 @@ export async function POST(request: NextRequest) {
           if (!tag) { const tid = crypto.randomUUID(); insertTag.run(tid, tagName, user.id); tag = { id: tid }; }
           insertBlockTag.run(blockId, tag.id);
         }
-        for (const pageName of pageResults[i]) {
-          let page = findPage.get(pageName, user.id) as { id: string } | undefined;
-          if (!page) { const pid = crypto.randomUUID(); insertPage.run(pid, pageName, user.id); page = { id: pid }; }
+        for (const pagePath of pageResults[i]) {
+          const page = resolvePageByPath(db, user.id, pagePath);
           insertBlockPage.run(blockId, page.id);
         }
       }
@@ -130,9 +162,8 @@ export async function POST(request: NextRequest) {
         if (!tag) { const tid = crypto.randomUUID(); insertTag.run(tid, tagName, user.id); tag = { id: tid }; }
         insertBlockTag.run(blockId, tag.id);
       }
-      for (const pageName of pageResults[i]) {
-        let page = findPage.get(pageName, user.id) as { id: string } | undefined;
-        if (!page) { const pid = crypto.randomUUID(); insertPage.run(pid, pageName, user.id); page = { id: pid }; }
+      for (const pagePath of pageResults[i]) {
+        const page = resolvePageByPath(db, user.id, pagePath);
         insertBlockPage.run(blockId, page.id);
       }
     }

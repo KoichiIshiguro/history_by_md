@@ -19,9 +19,21 @@ export async function GET() {
        GROUP BY p.id
        ORDER BY p.parent_id NULLS FIRST, p.sort_order ASC, p.name ASC`
     )
-    .all(user.id);
+    .all(user.id) as Array<{ id: string; name: string; parent_id: string | null; sort_order: number; ref_count: number }>;
 
-  return Response.json(pages);
+  // Compute full_path for each page (parent/child/grandchild)
+  const pageMap = new Map(pages.map((p) => [p.id, p]));
+  const pagesWithPath = pages.map((p) => {
+    const parts: string[] = [];
+    let current: typeof p | undefined = p;
+    while (current) {
+      parts.unshift(current.name);
+      current = current.parent_id ? pageMap.get(current.parent_id) : undefined;
+    }
+    return { ...p, full_path: parts.join("/") };
+  });
+
+  return Response.json(pagesWithPath);
 }
 
 export async function POST(request: NextRequest) {

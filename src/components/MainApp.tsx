@@ -13,6 +13,7 @@ interface Page {
   name: string;
   parent_id: string | null;
   ref_count: number;
+  full_path: string;
 }
 
 interface Tag {
@@ -79,7 +80,9 @@ export default function MainApp({ user, isAdmin }: Props) {
   const handleSelectPage = (pageId: string, pageName: string) => {
     setViewMode("page");
     setSelectedPageId(pageId);
-    setSelectedPageName(pageName);
+    // Show full_path in header if available
+    const page = pages.find((p) => p.id === pageId);
+    setSelectedPageName(page?.full_path || pageName);
   };
 
   const handleSelectTag = (tagId: string, tagName: string) => {
