@@ -1,7 +1,7 @@
 "use client";
 
 import { signOut } from "next-auth/react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import BlockEditor from "./BlockEditor";
 import AdminPanel from "./AdminPanel";
 import Sidebar from "./Sidebar";
@@ -44,6 +44,10 @@ export default function MainApp({ user, isAdmin }: Props) {
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
+  // Swipe gesture handling
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const check = () => {
       const mobile = window.innerWidth < 768;
@@ -54,6 +58,53 @@ export default function MainApp({ user, isAdmin }: Props) {
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
+
+  // Swipe gestures for mobile sidebars
+  useEffect(() => {
+    if (!isMobile) return;
+    const el = mainRef.current;
+    if (!el) return;
+
+    const handleTouchStart = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      touchStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (!touchStartRef.current) return;
+      const touch = e.changedTouches[0];
+      const dx = touch.clientX - touchStartRef.current.x;
+      const dy = touch.clientY - touchStartRef.current.y;
+      const dt = Date.now() - touchStartRef.current.time;
+      touchStartRef.current = null;
+
+      // Must be a quick horizontal swipe (not vertical scroll)
+      if (dt > 400 || Math.abs(dy) > Math.abs(dx) || Math.abs(dx) < 60) return;
+
+      if (dx > 0) {
+        // Swipe right → open left sidebar or close right sidebar
+        if (rightSidebarOpen) {
+          setRightSidebarOpen(false);
+        } else if (!sidebarOpen) {
+          setSidebarOpen(true);
+        }
+      } else {
+        // Swipe left → close left sidebar or open right sidebar (on page view)
+        if (sidebarOpen) {
+          setSidebarOpen(false);
+        } else if (viewMode === "page" && selectedPageId && !rightSidebarOpen) {
+          setRightSidebarOpen(true);
+        }
+      }
+    };
+
+    el.addEventListener("touchstart", handleTouchStart, { passive: true });
+    el.addEventListener("touchend", handleTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", handleTouchStart);
+      el.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, [isMobile, sidebarOpen, rightSidebarOpen, viewMode, selectedPageId]);
 
   const fetchPages = useCallback(async () => {
     const res = await fetch("/api/pages");
@@ -107,10 +158,10 @@ export default function MainApp({ user, isAdmin }: Props) {
     if (isMobile) setSidebarOpen(false);
   };
 
-  const showRightSidebar = viewMode === "page" && selectedPageId;
+  const hasRightSidebar = viewMode === "page" && selectedPageId;
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div ref={mainRef} className="flex h-screen overflow-hidden">
       {/* Left sidebar overlay */}
       {isMobile && sidebarOpen && (
         <div className="fixed inset-0 z-20 bg-black/30" onClick={() => setSidebarOpen(false)} />
@@ -128,7 +179,7 @@ export default function MainApp({ user, isAdmin }: Props) {
                 sidebarOpen ? "translate-x-0" : "-translate-x-full"
               }`
             : `${sidebarOpen ? "w-64" : "w-0"} transition-all duration-200 overflow-hidden`
-        } border-r border-orange-200 bg-orange-50/30 flex-shrink-0`}
+        } border-r border-orange-200 bg-[#fef6ee] flex-shrink-0`}
       >
         <Sidebar
           user={user}
@@ -164,7 +215,7 @@ export default function MainApp({ user, isAdmin }: Props) {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <h1 className="text-lg font-semibold text-gray-800">
+            <h1 className="text-lg font-semibold text-gray-800 truncate">
               {viewMode === "date" && (
                 <>
                   <span className="text-orange-400 text-sm mr-2">日付</span>
@@ -191,7 +242,7 @@ export default function MainApp({ user, isAdmin }: Props) {
           </div>
           <div className="flex items-center gap-1">
             {/* Right sidebar toggle (mobile, page view only) */}
-            {isMobile && showRightSidebar && (
+            {isMobile && hasRightSidebar && (
               <button
                 onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
                 className={`rounded p-1.5 transition ${rightSidebarOpen ? "bg-orange-100 text-orange-600" : "text-gray-500 hover:bg-orange-50"}`}
@@ -265,8 +316,8 @@ export default function MainApp({ user, isAdmin }: Props) {
             )}
           </div>
           {/* Right sidebar - desktop */}
-          {showRightSidebar && !isMobile && (
-            <div className="w-72 border-l border-orange-100 bg-orange-50/30 overflow-auto p-3 flex-shrink-0">
+          {hasRightSidebar && !isMobile && (
+            <div className="w-72 border-l border-orange-100 bg-[#fef6ee] overflow-auto p-3 flex-shrink-0">
               <h3 className="text-sm font-semibold text-orange-600 mb-2">アクション</h3>
               <ActionList
                 pageId={selectedPageId!}
@@ -279,15 +330,15 @@ export default function MainApp({ user, isAdmin }: Props) {
             </div>
           )}
           {/* Right sidebar - mobile (slide in from right) */}
-          {showRightSidebar && isMobile && (
+          {isMobile && hasRightSidebar && (
             <div
-              className={`fixed inset-y-0 right-0 z-30 w-72 transform transition-transform duration-200 border-l border-orange-100 bg-white overflow-auto p-3 ${
+              className={`fixed inset-y-0 right-0 z-30 w-72 transform transition-transform duration-200 border-l border-orange-200 bg-[#fef6ee] overflow-auto p-3 shadow-xl ${
                 rightSidebarOpen ? "translate-x-0" : "translate-x-full"
               }`}
             >
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-orange-600">アクション</h3>
-                <button onClick={() => setRightSidebarOpen(false)} className="rounded p-1 text-gray-400 hover:bg-gray-100">
+                <button onClick={() => setRightSidebarOpen(false)} className="rounded p-1 text-gray-400 hover:bg-orange-100">
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
