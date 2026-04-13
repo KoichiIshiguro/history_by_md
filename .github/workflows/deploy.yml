@@ -36,4 +36,4 @@ jobs:
             npx next build
             sudo systemctl restart histmd
             sleep 3
-            curl -s -o /dev/null -w 'HTTP %{http_code}' http://127.0.0.1:3100/ | grep -q '200' && echo 'Deploy successful!' || echo 'Deploy might have failed'
+            curl -s -o /dev/null -w 'HTTP %{http_code}' http://127.0.0.1:3101/ | grep -q '200' && echo 'Deploy successful!' || echo 'Deploy might have failed'
