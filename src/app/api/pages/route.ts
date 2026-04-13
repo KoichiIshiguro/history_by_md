@@ -49,9 +49,10 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "Name is required" }, { status: 400 });
   }
 
-  const existing = db
-    .prepare("SELECT id FROM pages WHERE name = ? AND user_id = ?")
-    .get(name.trim(), user.id);
+  // Check duplicate within same parent
+  const existing = parent_id
+    ? db.prepare("SELECT id FROM pages WHERE name = ? AND user_id = ? AND parent_id = ?").get(name.trim(), user.id, parent_id)
+    : db.prepare("SELECT id FROM pages WHERE name = ? AND user_id = ? AND parent_id IS NULL").get(name.trim(), user.id);
   if (existing) {
     return Response.json({ error: "Page already exists" }, { status: 409 });
   }
@@ -80,6 +81,16 @@ export async function PUT(request: NextRequest) {
   const { id, name, parent_id } = await request.json();
 
   if (name !== undefined) {
+    // Check for duplicate within same parent
+    const page = db.prepare("SELECT parent_id FROM pages WHERE id = ? AND user_id = ?").get(id, user.id) as { parent_id: string | null } | undefined;
+    if (page) {
+      const dup = page.parent_id
+        ? db.prepare("SELECT id FROM pages WHERE name = ? AND user_id = ? AND parent_id = ? AND id != ?").get(name.trim(), user.id, page.parent_id, id)
+        : db.prepare("SELECT id FROM pages WHERE name = ? AND user_id = ? AND parent_id IS NULL AND id != ?").get(name.trim(), user.id, id);
+      if (dup) {
+        return Response.json({ error: "同じ階層に同名のページがあります" }, { status: 409 });
+      }
+    }
     db.prepare("UPDATE pages SET name = ? WHERE id = ? AND user_id = ?").run(
       name.trim(), id, user.id
     );
