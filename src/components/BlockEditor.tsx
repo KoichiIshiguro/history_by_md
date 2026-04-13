@@ -6,9 +6,29 @@ import React, {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
-import mermaid from "mermaid";
 
-mermaid.initialize({ startOnLoad: false, theme: "default" });
+// Load mermaid dynamically from CDN to avoid 291MB npm dependency
+let mermaidLoaded = false;
+let mermaidLoadPromise: Promise<void> | null = null;
+function loadMermaid(): Promise<void> {
+  if (mermaidLoaded) return Promise.resolve();
+  if (mermaidLoadPromise) return mermaidLoadPromise;
+  mermaidLoadPromise = new Promise((resolve, reject) => {
+    if (typeof window === "undefined") { resolve(); return; }
+    const existing = document.querySelector('script[src*="mermaid"]');
+    if (existing) { mermaidLoaded = true; resolve(); return; }
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js";
+    script.onload = () => {
+      (window as any).mermaid?.initialize({ startOnLoad: false, theme: "default" });
+      mermaidLoaded = true;
+      resolve();
+    };
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+  return mermaidLoadPromise;
+}
 
 interface Block {
   id: string;
@@ -66,7 +86,7 @@ function preprocessCustomSyntax(content: string, allPages: PageInfo[], allTags: 
   return result;
 }
 
-// Mermaid rendering component
+// Mermaid rendering component (CDN loaded)
 function MermaidDiagram({ chart }: { chart: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-${Math.random().toString(36).slice(2, 9)}`);
@@ -77,7 +97,10 @@ function MermaidDiagram({ chart }: { chart: string }) {
     let cancelled = false;
     (async () => {
       try {
-        const { svg } = await mermaid.render(idRef.current, chart);
+        await loadMermaid();
+        const m = (window as any).mermaid;
+        if (!m || cancelled) return;
+        const { svg } = await m.render(idRef.current, chart);
         if (!cancelled && el) el.innerHTML = svg;
       } catch {
         if (!cancelled && el) el.innerHTML = `<pre class="text-red-500 text-xs">Mermaid rendering error</pre>`;

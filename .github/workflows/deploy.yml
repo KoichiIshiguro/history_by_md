@@ -44,8 +44,8 @@ jobs:
             npm install --prefer-offline 2>&1 | tail -5
             npm rebuild better-sqlite3
 
-            # Build with limited memory
-            NODE_OPTIONS="--max-old-space-size=512" npx next build
+            # Build with limited memory (server has ~960MB RAM)
+            NODE_OPTIONS="--max-old-space-size=768" npx next build
 
             # Start service
             sudo systemctl start histmd
