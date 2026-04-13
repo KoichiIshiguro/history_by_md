@@ -65,31 +65,40 @@ export default function MainApp({ user, isAdmin }: Props) {
     const el = mainRef.current;
     if (!el) return;
 
+    const EDGE_ZONE = 24; // px from screen edge to trigger swipe
+    const screenW = window.innerWidth;
+
     const handleTouchStart = (e: TouchEvent) => {
       const touch = e.touches[0];
-      touchStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+      const x = touch.clientX;
+      // Only register if starting from screen edge
+      if (x <= EDGE_ZONE || x >= screenW - EDGE_ZONE) {
+        touchStartRef.current = { x, y: touch.clientY, time: Date.now() };
+      } else {
+        touchStartRef.current = null;
+      }
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
       if (!touchStartRef.current) return;
       const touch = e.changedTouches[0];
-      const dx = touch.clientX - touchStartRef.current.x;
+      const startX = touchStartRef.current.x;
+      const dx = touch.clientX - startX;
       const dy = touch.clientY - touchStartRef.current.y;
       const dt = Date.now() - touchStartRef.current.time;
       touchStartRef.current = null;
 
-      // Must be a quick horizontal swipe (not vertical scroll)
-      if (dt > 400 || Math.abs(dy) > Math.abs(dx) || Math.abs(dx) < 60) return;
+      if (dt > 400 || Math.abs(dy) > Math.abs(dx) || Math.abs(dx) < 40) return;
 
-      if (dx > 0) {
-        // Swipe right → open left sidebar or close right sidebar
+      if (dx > 0 && startX <= EDGE_ZONE) {
+        // Swipe right from left edge → open left sidebar or close right sidebar
         if (rightSidebarOpen) {
           setRightSidebarOpen(false);
         } else if (!sidebarOpen) {
           setSidebarOpen(true);
         }
-      } else {
-        // Swipe left → close left sidebar or open right sidebar (on page view)
+      } else if (dx < 0 && startX >= screenW - EDGE_ZONE) {
+        // Swipe left from right edge → close left sidebar or open right sidebar
         if (sidebarOpen) {
           setSidebarOpen(false);
         } else if (viewMode === "page" && selectedPageId && !rightSidebarOpen) {
