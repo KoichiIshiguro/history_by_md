@@ -1,8 +1,14 @@
 "use client";
 
 import React, {
-  useState, useEffect, useCallback, useRef, KeyboardEvent,
+  useState, useEffect, useCallback, useRef, KeyboardEvent, useMemo,
 } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import mermaid from "mermaid";
+
+mermaid.initialize({ startOnLoad: false, theme: "default" });
 
 interface Block {
   id: string;
@@ -33,87 +39,190 @@ interface Props {
   onDataChange: () => void;
 }
 
-// Render content: {{page}}, #tag, [[date]], **bold**, *italic*, `code`
-function renderContent(
-  content: string,
-  onPageClick: (id: string, name: string) => void,
-  onTagClick: (id: string, name: string) => void,
-  onDateClick: (date: string) => void,
-  allPages: PageInfo[], allTags: TagInfo[]
-) {
-  const parts: (string | React.ReactElement)[] = [];
-  let remaining = content;
-  let key = 0;
+// Pre-process custom syntax into HTML spans before markdown rendering
+function preprocessCustomSyntax(content: string, allPages: PageInfo[], allTags: TagInfo[]): string {
+  let result = content;
 
-  while (remaining.length > 0) {
-    // {{page ref}}
-    const pageMatch = remaining.match(/^(.*?)\{\{([^}]+)\}\}/);
-    if (pageMatch) {
-      if (pageMatch[1]) { parts.push(...renderMarkdown(pageMatch[1], key)); key += 10; }
-      const pageName = pageMatch[2].trim();
-      const existingPage = allPages.find((p) => p.name === pageName);
-      parts.push(
-        <span key={`page-${key++}`} className="page-link"
-          onClick={(e) => { e.stopPropagation(); if (existingPage) onPageClick(existingPage.id, existingPage.name); }}>
-          {pageName}
-        </span>
-      );
-      remaining = remaining.slice(pageMatch[0].length);
-      continue;
-    }
+  // {{page ref}} → HTML span
+  result = result.replace(/\{\{([^}]+)\}\}/g, (_match, pageName: string) => {
+    const trimmed = pageName.trim();
+    const page = allPages.find((p) => p.name === trimmed);
+    const dataId = page ? page.id : "";
+    return `<span class="page-link" data-page-id="${dataId}" data-page-name="${trimmed}">${trimmed}</span>`;
+  });
 
-    // #tag
-    const tagMatch = remaining.match(/^(.*?)#([^\s#{}]+)/);
-    if (tagMatch) {
-      if (tagMatch[1]) { parts.push(...renderMarkdown(tagMatch[1], key)); key += 10; }
-      const tagName = tagMatch[2];
-      const existingTag = allTags.find((t) => t.name === tagName);
-      parts.push(
-        <span key={`tag-${key++}`} className="tag-inline"
-          onClick={(e) => { e.stopPropagation(); if (existingTag) onTagClick(existingTag.id, existingTag.name); }}>
-          #{tagName}
-        </span>
-      );
-      remaining = remaining.slice(tagMatch[0].length);
-      continue;
-    }
+  // #tag → HTML span (but not inside code blocks or HTML tags)
+  result = result.replace(/(^|[^&\w])#([^\s#{}()<>]+)/g, (_match, prefix: string, tagName: string) => {
+    const tag = allTags.find((t) => t.name === tagName);
+    const dataId = tag ? tag.id : "";
+    return `${prefix}<span class="tag-inline" data-tag-id="${dataId}" data-tag-name="${tagName}">#${tagName}</span>`;
+  });
 
-    // [[date]]
-    const dateMatch = remaining.match(/^(.*?)\[\[(\d{4}-\d{2}-\d{2})\]\]/);
-    if (dateMatch) {
-      if (dateMatch[1]) { parts.push(...renderMarkdown(dateMatch[1], key)); key += 10; }
-      parts.push(
-        <span key={`date-${key++}`} className="date-link"
-          onClick={(e) => { e.stopPropagation(); onDateClick(dateMatch[2]); }}>
-          {dateMatch[2]}
-        </span>
-      );
-      remaining = remaining.slice(dateMatch[0].length);
-      continue;
-    }
+  // [[date]] → HTML span
+  result = result.replace(/\[\[(\d{4}-\d{2}-\d{2})\]\]/g, (_match, date: string) => {
+    return `<span class="date-link" data-date="${date}">${date}</span>`;
+  });
 
-    parts.push(...renderMarkdown(remaining, key));
-    break;
-  }
-  return parts;
+  return result;
 }
 
-function renderMarkdown(text: string, startKey: number): (string | React.ReactElement)[] {
-  const parts: (string | React.ReactElement)[] = [];
-  let key = startKey;
-  const mdRegex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
-  let lastIndex = 0;
-  let match;
-  while ((match = mdRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
-    if (match[2]) parts.push(<strong key={`md-${key++}`} className="md-bold">{match[2]}</strong>);
-    else if (match[3]) parts.push(<em key={`md-${key++}`} className="md-italic">{match[3]}</em>);
-    else if (match[4]) parts.push(<code key={`md-${key++}`} className="md-code">{match[4]}</code>);
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
-  if (parts.length === 0) parts.push(text);
-  return parts;
+// Mermaid rendering component
+function MermaidDiagram({ chart }: { chart: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const idRef = useRef(`mermaid-${Math.random().toString(36).slice(2, 9)}`);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { svg } = await mermaid.render(idRef.current, chart);
+        if (!cancelled && el) el.innerHTML = svg;
+      } catch {
+        if (!cancelled && el) el.innerHTML = `<pre class="text-red-500 text-xs">Mermaid rendering error</pre>`;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [chart]);
+
+  return <div ref={containerRef} className="my-2 overflow-auto" />;
+}
+
+// Markdown content renderer with GFM + custom syntax
+function MarkdownContent({
+  content, allPages, allTags, onPageClick, onTagClick, onDateClick,
+}: {
+  content: string;
+  allPages: PageInfo[];
+  allTags: TagInfo[];
+  onPageClick: (id: string, name: string) => void;
+  onTagClick: (id: string, name: string) => void;
+  onDateClick: (date: string) => void;
+}) {
+  const processed = useMemo(() => preprocessCustomSyntax(content, allPages, allTags), [content, allPages, allTags]);
+
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeRaw]}
+      components={{
+        // Mermaid code blocks
+        code({ className, children, ...props }) {
+          const match = /language-mermaid/.exec(className || "");
+          const codeStr = String(children).replace(/\n$/, "");
+          if (match) {
+            return <MermaidDiagram chart={codeStr} />;
+          }
+          // Inline code vs code blocks
+          const isBlock = className || codeStr.includes("\n");
+          if (isBlock) {
+            return (
+              <code className={`${className || ""} block-code`} {...props}>
+                {children}
+              </code>
+            );
+          }
+          return <code className="md-code" {...props}>{children}</code>;
+        },
+        pre({ children }) {
+          return <pre className="gfm-pre">{children}</pre>;
+        },
+        // Tables
+        table({ children }) {
+          return <table className="gfm-table">{children}</table>;
+        },
+        th({ children }) {
+          return <th className="gfm-th">{children}</th>;
+        },
+        td({ children }) {
+          return <td className="gfm-td">{children}</td>;
+        },
+        // Task list items
+        li({ children, ...props }) {
+          const inputChild = React.Children.toArray(children).find(
+            (child) => React.isValidElement(child) && (child as React.ReactElement<{ type?: string }>).props.type === "checkbox"
+          );
+          if (inputChild) {
+            return <li className="gfm-task-item" {...props}>{children}</li>;
+          }
+          return <li {...props}>{children}</li>;
+        },
+        input({ checked, ...props }) {
+          return <input type="checkbox" checked={checked} readOnly className="gfm-checkbox" {...props} />;
+        },
+        // Strikethrough
+        del({ children }) {
+          return <del className="gfm-strikethrough">{children}</del>;
+        },
+        // Headings
+        h1({ children }) { return <span className="md-heading-1">{children}</span>; },
+        h2({ children }) { return <span className="md-heading-2">{children}</span>; },
+        h3({ children }) { return <span className="md-heading-3">{children}</span>; },
+        h4({ children }) { return <span className="md-heading-4">{children}</span>; },
+        // Paragraph — render inline to avoid extra spacing in block editor
+        p({ children }) { return <span>{children}</span>; },
+        // Blockquote
+        blockquote({ children }) {
+          return <blockquote className="gfm-blockquote">{children}</blockquote>;
+        },
+        // Links
+        a({ href, children }) {
+          return <a href={href} target="_blank" rel="noopener noreferrer" className="gfm-link">{children}</a>;
+        },
+        // Images
+        img({ src, alt }) {
+          return <img src={src} alt={alt || ""} className="gfm-img" />;
+        },
+        // Horizontal rule
+        hr() {
+          return <hr className="gfm-hr" />;
+        },
+        // Custom span handler for our custom syntax
+        span({ className, children, ...props }) {
+          const dataProps = props as Record<string, string>;
+          if (className === "page-link") {
+            return (
+              <span className="page-link" onClick={(e) => {
+                e.stopPropagation();
+                const pageId = dataProps["data-page-id"];
+                const pageName = dataProps["data-page-name"];
+                if (pageId && pageName) onPageClick(pageId, pageName);
+              }}>
+                {children}
+              </span>
+            );
+          }
+          if (className === "tag-inline") {
+            return (
+              <span className="tag-inline" onClick={(e) => {
+                e.stopPropagation();
+                const tagId = dataProps["data-tag-id"];
+                const tagName = dataProps["data-tag-name"];
+                if (tagId && tagName) onTagClick(tagId, tagName);
+              }}>
+                {children}
+              </span>
+            );
+          }
+          if (className === "date-link") {
+            return (
+              <span className="date-link" onClick={(e) => {
+                e.stopPropagation();
+                const date = dataProps["data-date"];
+                if (date) onDateClick(date);
+              }}>
+                {children}
+              </span>
+            );
+          }
+          return <span className={className} {...props}>{children}</span>;
+        },
+      }}
+    >
+      {processed}
+    </ReactMarkdown>
+  );
 }
 
 export default function BlockEditor({
@@ -175,7 +284,6 @@ export default function BlockEditor({
         body: JSON.stringify({ pageId: selectedPageId, blocks: updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i })) }),
       });
     } else if (viewMode === "tag") {
-      // Tag view: save individual blocks via PUT
       for (const block of updatedBlocks) {
         await fetch("/api/blocks", {
           method: "PUT", headers: { "Content-Type": "application/json" },
@@ -196,7 +304,6 @@ export default function BlockEditor({
     saveTimeoutRef.current = setTimeout(() => saveBlocks(updatedBlocks), 800);
   }, [saveBlocks]);
 
-  // Save a single ref block via PUT
   const refSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const debouncedRefSave = useCallback((block: Block) => {
     if (refSaveTimeoutRef.current) clearTimeout(refSaveTimeoutRef.current);
@@ -278,7 +385,6 @@ export default function BlockEditor({
 
   const finishEditing = () => {
     if (!editingBlockId) return;
-    // Check ref blocks
     const refBlock = [...pageRefs, ...dateRefs].find((b) => b.id === editingBlockId);
     if (refBlock) {
       const updated = { ...refBlock, content: editContent };
@@ -292,10 +398,8 @@ export default function BlockEditor({
     debouncedSave(updated);
   };
 
-  // Suggestion logic: #tag or {{page
   const handleContentChange = (value: string) => {
     setEditContent(value);
-    // Check {{page suggestion
     const pageMatch = value.match(/\{\{([^}]*)$/);
     if (pageMatch) {
       const q = pageMatch[1].toLowerCase();
@@ -303,7 +407,6 @@ export default function BlockEditor({
       setSuggestions({ type: "page", items }); setShowSuggestions(items.length > 0); setSelectedSuggestion(0);
       return;
     }
-    // Check #tag suggestion
     const tagMatch = value.match(/#([^\s#{}]*)$/);
     if (tagMatch) {
       const q = tagMatch[1].toLowerCase();
@@ -385,7 +488,6 @@ export default function BlockEditor({
     }
   };
 
-  // Simple keydown for ref blocks (only Tab indent)
   const handleRefKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>, block: Block) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (showSuggestions) {
@@ -410,7 +512,6 @@ export default function BlockEditor({
     setBlocks(updated); startEditing(newBlock); debouncedSave(updated);
   };
 
-  // Group ref blocks by date or source page
   const groupedDateRefs = dateRefs.reduce((acc, b) => {
     if (!acc[b.date]) acc[b.date] = [];
     acc[b.date].push(b);
@@ -424,7 +525,6 @@ export default function BlockEditor({
     return acc;
   }, {} as Record<string, { name: string; blocks: Block[] }>);
 
-  // Group tag-view blocks by date
   const groupedTagBlocks = viewMode === "tag" ? blocks.reduce((acc, b) => {
     const key = b.date || "no-date";
     if (!acc[key]) acc[key] = [];
@@ -463,7 +563,7 @@ export default function BlockEditor({
           </div>
           <button onClick={addNewBlock} className="mt-2 rounded px-3 py-1.5 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600">+ 新しいブロック</button>
 
-          {/* 2. Page references (from other pages) */}
+          {/* 2. Page references */}
           {Object.keys(groupedPageRefs).length > 0 && (
             <div className="mt-6">
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">ページからの参照</h3>
@@ -546,12 +646,6 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
   onBlockMouseDown: (e: React.MouseEvent, blockIndex: number) => void;
 }) {
   const indent = block.indent_level * 24;
-  const headingMatch = block.content.match(/^(#{1,3})\s/);
-  let headingClass = "";
-  if (headingMatch) {
-    const level = headingMatch[1].length;
-    headingClass = level === 1 ? "md-heading-1" : level === 2 ? "md-heading-2" : "md-heading-3";
-  }
 
   return (
     <div className={`group relative flex items-start py-0.5 ${isSelected ? "bg-blue-100 rounded" : ""}`}
@@ -583,9 +677,10 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
         </div>
       ) : (
         <div onClick={() => onStartEditing(block)}
-          className={`block-line flex-1 cursor-text p-1 text-sm hover:bg-gray-50 rounded ${headingClass}`}>
+          className="block-line block-content flex-1 cursor-text p-1 text-sm hover:bg-gray-50 rounded">
           {block.content
-            ? renderContent(block.content, onPageClick, onTagClick, onDateClick, allPages, allTags)
+            ? <MarkdownContent content={block.content} allPages={allPages} allTags={allTags}
+                onPageClick={onPageClick} onTagClick={onTagClick} onDateClick={onDateClick} />
             : "\u00A0"}
         </div>
       )}

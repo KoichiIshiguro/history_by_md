@@ -52,6 +52,21 @@ function buildPageTree(pages: Page[]): PageTreeNode[] {
   return roots;
 }
 
+function groupDatesByMonth(dates: string[]): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  for (const date of dates) {
+    const month = date.slice(0, 7); // YYYY-MM
+    if (!grouped.has(month)) grouped.set(month, []);
+    grouped.get(month)!.push(date);
+  }
+  return grouped;
+}
+
+function formatMonth(ym: string): string {
+  const [y, m] = ym.split("-");
+  return `${y}年${parseInt(m)}月`;
+}
+
 export default function Sidebar({
   user, isAdmin, pages, tags, dates, selectedDate, selectedPageId, selectedTagId,
   viewMode, onSelectDate, onSelectPage, onSelectTag, onSelectAdmin, onSignOut,
@@ -61,16 +76,38 @@ export default function Sidebar({
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [addingChildOf, setAddingChildOf] = useState<string | null>(null);
   const [tagSearch, setTagSearch] = useState("");
+  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(() => {
+    const now = new Date().toISOString().slice(0, 7);
+    return new Set([now]);
+  });
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
 
   const pageTree = buildPageTree(pages);
   const filteredTags = tagSearch
     ? tags.filter((t) => t.name.toLowerCase().includes(tagSearch.toLowerCase()))
     : tags;
+  const datesByMonth = groupDatesByMonth(dates);
 
   const toggleExpand = (id: string) => {
     setExpandedPages((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleMonth = (month: string) => {
+    setExpandedMonths((prev) => {
+      const next = new Set(prev);
+      next.has(month) ? next.delete(month) : next.add(month);
+      return next;
+    });
+  };
+
+  const toggleSection = (section: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      next.has(section) ? next.delete(section) : next.add(section);
       return next;
     });
   };
@@ -102,6 +139,8 @@ export default function Sidebar({
 
   const click = (action: () => void) => { action(); onCloseMobile(); };
 
+  const today = new Date().toISOString().split("T")[0];
+
   return (
     <div className="flex h-full flex-col">
       {/* User */}
@@ -127,26 +166,15 @@ export default function Sidebar({
           </div>
         )}
 
-        {/* Dates */}
-        <div className="p-2">
-          <h3 className="mb-1 px-2 text-xs font-semibold uppercase tracking-wider text-gray-400">日付</h3>
-          <button
-            onClick={() => click(() => onSelectDate(new Date().toISOString().split("T")[0]))}
-            className={`w-full rounded px-3 py-1.5 text-left text-sm ${
-              viewMode === "date" && selectedDate === new Date().toISOString().split("T")[0] ? "bg-orange-100 text-orange-700" : "text-gray-600 hover:bg-gray-100"
-            }`}
-          >今日</button>
-          {dates.map((date) => (
-            <button key={date} onClick={() => click(() => onSelectDate(date))}
-              className={`w-full rounded px-3 py-1.5 text-left text-sm ${viewMode === "date" && selectedDate === date ? "bg-orange-100 text-orange-700" : "text-gray-600 hover:bg-gray-100"}`}
-            >{date}</button>
-          ))}
-        </div>
-
-        {/* Pages */}
+        {/* 1. Pages */}
         <div className="p-2">
           <div className="mb-1 flex items-center justify-between px-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">ページ</h3>
+            <button onClick={() => toggleSection("pages")} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600">
+              <svg className={`h-3 w-3 transition-transform ${collapsedSections.has("pages") ? "" : "rotate-90"}`} fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+              </svg>
+              ページ
+            </button>
             <button onClick={() => setAddingChildOf(addingChildOf === "__root__" ? null : "__root__")}
               className="text-gray-400 hover:text-gray-600" title="新しいページ">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -154,41 +182,99 @@ export default function Sidebar({
               </svg>
             </button>
           </div>
-          {addingChildOf === "__root__" && (
-            <InlineInput depth={0} placeholder="ページ名..."
-              onSubmit={(n) => createPage(n, null)} onCancel={() => setAddingChildOf(null)} />
+          {!collapsedSections.has("pages") && (
+            <>
+              {addingChildOf === "__root__" && (
+                <InlineInput depth={0} placeholder="ページ名..."
+                  onSubmit={(n) => createPage(n, null)} onCancel={() => setAddingChildOf(null)} />
+              )}
+              {pages.length === 0 && addingChildOf !== "__root__" && (
+                <p className="px-3 py-2 text-xs text-gray-400">ページなし</p>
+              )}
+              {pageTree.map((p) => (
+                <PageNode key={p.id} page={p} depth={0} selectedPageId={selectedPageId} viewMode={viewMode}
+                  expandedPages={expandedPages} addingChildOf={addingChildOf}
+                  onToggleExpand={toggleExpand}
+                  onSelectPage={(id, name) => click(() => onSelectPage(id, name))}
+                  onDeletePage={(id, name) => setDeleteTarget({ id, name })}
+                  onAddChild={(id) => setAddingChildOf(addingChildOf === id ? null : id)}
+                  onCreatePage={createPage} onCancelAdd={() => setAddingChildOf(null)} />
+              ))}
+            </>
           )}
-          {pages.length === 0 && addingChildOf !== "__root__" && (
-            <p className="px-3 py-2 text-xs text-gray-400">ページなし</p>
-          )}
-          {pageTree.map((p) => (
-            <PageNode key={p.id} page={p} depth={0} selectedPageId={selectedPageId} viewMode={viewMode}
-              expandedPages={expandedPages} addingChildOf={addingChildOf}
-              onToggleExpand={toggleExpand}
-              onSelectPage={(id, name) => click(() => onSelectPage(id, name))}
-              onDeletePage={(id, name) => setDeleteTarget({ id, name })}
-              onAddChild={(id) => setAddingChildOf(addingChildOf === id ? null : id)}
-              onCreatePage={createPage} onCancelAdd={() => setAddingChildOf(null)} />
-          ))}
         </div>
 
-        {/* Tags */}
+        {/* 2. Dates (month-grouped) */}
         <div className="p-2">
-          <h3 className="mb-1 px-2 text-xs font-semibold uppercase tracking-wider text-gray-400">タグ</h3>
-          <div className="mb-1 px-1">
-            <input type="text" value={tagSearch} onChange={(e) => setTagSearch(e.target.value)}
-              placeholder="タグを検索..." className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs outline-none focus:border-blue-300" />
-          </div>
-          {filteredTags.length === 0 && <p className="px-3 py-1 text-xs text-gray-400">タグなし</p>}
-          {filteredTags.map((tag) => (
-            <button key={tag.id} onClick={() => click(() => onSelectTag(tag.id, tag.name))}
-              className={`w-full rounded px-3 py-1 text-left text-sm flex items-center justify-between ${
-                viewMode === "tag" && selectedTagId === tag.id ? "bg-blue-100 text-blue-700" : "text-gray-600 hover:bg-gray-100"
-              }`}>
-              <span>#{tag.name}</span>
-              <span className="text-xs text-gray-400">{tag.block_count}</span>
+          <div className="mb-1 flex items-center justify-between px-2">
+            <button onClick={() => toggleSection("dates")} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600">
+              <svg className={`h-3 w-3 transition-transform ${collapsedSections.has("dates") ? "" : "rotate-90"}`} fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+              </svg>
+              日付
             </button>
-          ))}
+          </div>
+          {!collapsedSections.has("dates") && (
+            <>
+              <button
+                onClick={() => click(() => onSelectDate(today))}
+                className={`w-full rounded px-3 py-1.5 text-left text-sm font-medium ${
+                  viewMode === "date" && selectedDate === today ? "bg-orange-100 text-orange-700" : "text-orange-600 hover:bg-orange-50"
+                }`}
+              >今日</button>
+              {[...datesByMonth.entries()].map(([month, monthDates]) => (
+                <div key={month}>
+                  <button
+                    onClick={() => toggleMonth(month)}
+                    className="flex w-full items-center gap-1 rounded px-3 py-1 text-left text-xs font-medium text-gray-500 hover:bg-gray-100"
+                  >
+                    <svg className={`h-3 w-3 transition-transform ${expandedMonths.has(month) ? "rotate-90" : ""}`} fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    </svg>
+                    {formatMonth(month)}
+                    <span className="ml-auto text-gray-400">{monthDates.length}</span>
+                  </button>
+                  {expandedMonths.has(month) && monthDates.map((date) => (
+                    <button key={date} onClick={() => click(() => onSelectDate(date))}
+                      className={`w-full rounded py-1 pl-7 pr-3 text-left text-sm ${
+                        viewMode === "date" && selectedDate === date ? "bg-orange-100 text-orange-700" : "text-gray-600 hover:bg-gray-100"
+                      }`}
+                    >{date.slice(5)}</button>
+                  ))}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* 3. Tags */}
+        <div className="p-2">
+          <div className="mb-1 flex items-center justify-between px-2">
+            <button onClick={() => toggleSection("tags")} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600">
+              <svg className={`h-3 w-3 transition-transform ${collapsedSections.has("tags") ? "" : "rotate-90"}`} fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+              </svg>
+              タグ
+            </button>
+          </div>
+          {!collapsedSections.has("tags") && (
+            <>
+              <div className="mb-1 px-1">
+                <input type="text" value={tagSearch} onChange={(e) => setTagSearch(e.target.value)}
+                  placeholder="タグを検索..." className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs outline-none focus:border-blue-300" />
+              </div>
+              {filteredTags.length === 0 && <p className="px-3 py-1 text-xs text-gray-400">タグなし</p>}
+              {filteredTags.map((tag) => (
+                <button key={tag.id} onClick={() => click(() => onSelectTag(tag.id, tag.name))}
+                  className={`w-full rounded px-3 py-1 text-left text-sm flex items-center justify-between ${
+                    viewMode === "tag" && selectedTagId === tag.id ? "bg-blue-100 text-blue-700" : "text-gray-600 hover:bg-gray-100"
+                  }`}>
+                  <span>#{tag.name}</span>
+                  <span className="text-xs text-gray-400">{tag.block_count}</span>
+                </button>
+              ))}
+            </>
+          )}
         </div>
       </div>
 
