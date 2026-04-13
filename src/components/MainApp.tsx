@@ -6,12 +6,18 @@ import BlockEditor from "./BlockEditor";
 import AdminPanel from "./AdminPanel";
 import Sidebar from "./Sidebar";
 
-type ViewMode = "date" | "tag" | "admin";
+type ViewMode = "date" | "page" | "tag" | "admin";
+
+interface Page {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  ref_count: number;
+}
 
 interface Tag {
   id: string;
   name: string;
-  parent_id: string | null;
   block_count: number;
 }
 
@@ -25,8 +31,11 @@ export default function MainApp({ user, isAdmin }: Props) {
   const [selectedDate, setSelectedDate] = useState(
     new Date().toISOString().split("T")[0]
   );
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
+  const [selectedPageName, setSelectedPageName] = useState("");
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
-  const [selectedTagName, setSelectedTagName] = useState<string>("");
+  const [selectedTagName, setSelectedTagName] = useState("");
+  const [pages, setPages] = useState<Page[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [dates, setDates] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -43,6 +52,11 @@ export default function MainApp({ user, isAdmin }: Props) {
     return () => window.removeEventListener("resize", check);
   }, []);
 
+  const fetchPages = useCallback(async () => {
+    const res = await fetch("/api/pages");
+    if (res.ok) setPages(await res.json());
+  }, []);
+
   const fetchTags = useCallback(async () => {
     const res = await fetch("/api/tags");
     if (res.ok) setTags(await res.json());
@@ -57,9 +71,16 @@ export default function MainApp({ user, isAdmin }: Props) {
   }, []);
 
   useEffect(() => {
+    fetchPages();
     fetchTags();
     fetchDates();
-  }, [fetchTags, fetchDates]);
+  }, [fetchPages, fetchTags, fetchDates]);
+
+  const handleSelectPage = (pageId: string, pageName: string) => {
+    setViewMode("page");
+    setSelectedPageId(pageId);
+    setSelectedPageName(pageName);
+  };
 
   const handleSelectTag = (tagId: string, tagName: string) => {
     setViewMode("tag");
@@ -73,6 +94,7 @@ export default function MainApp({ user, isAdmin }: Props) {
   };
 
   const handleDataChange = () => {
+    fetchPages();
     fetchTags();
     fetchDates();
   };
@@ -83,7 +105,6 @@ export default function MainApp({ user, isAdmin }: Props) {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* Mobile overlay */}
       {isMobile && sidebarOpen && (
         <div
           className="fixed inset-0 z-20 bg-black/30"
@@ -91,7 +112,6 @@ export default function MainApp({ user, isAdmin }: Props) {
         />
       )}
 
-      {/* Sidebar */}
       <div
         className={`${
           isMobile
@@ -104,23 +124,25 @@ export default function MainApp({ user, isAdmin }: Props) {
         <Sidebar
           user={user}
           isAdmin={isAdmin}
+          pages={pages}
           tags={tags}
           dates={dates}
           selectedDate={selectedDate}
+          selectedPageId={selectedPageId}
           selectedTagId={selectedTagId}
           viewMode={viewMode}
           onSelectDate={handleSelectDate}
+          onSelectPage={handleSelectPage}
           onSelectTag={handleSelectTag}
           onSelectAdmin={() => setViewMode("admin")}
           onSignOut={() => signOut()}
+          onPagesChange={fetchPages}
           onTagsChange={fetchTags}
           onCloseMobile={closeMobileSidebar}
         />
       </div>
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
         <header className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-2">
           <div className="flex items-center gap-3">
             <button
@@ -136,6 +158,12 @@ export default function MainApp({ user, isAdmin }: Props) {
                 <>
                   <span className="text-gray-400 text-sm mr-2">日付</span>
                   {selectedDate}
+                </>
+              )}
+              {viewMode === "page" && (
+                <>
+                  <span className="text-gray-400 text-sm mr-2">ページ</span>
+                  {selectedPageName}
                 </>
               )}
               {viewMode === "tag" && (
@@ -179,7 +207,6 @@ export default function MainApp({ user, isAdmin }: Props) {
           )}
         </header>
 
-        {/* Content */}
         <main className="flex-1 overflow-auto p-4">
           {viewMode === "admin" && isAdmin ? (
             <AdminPanel />
@@ -187,9 +214,13 @@ export default function MainApp({ user, isAdmin }: Props) {
             <BlockEditor
               viewMode={viewMode}
               selectedDate={selectedDate}
+              selectedPageId={selectedPageId}
+              selectedPageName={selectedPageName}
               selectedTagId={selectedTagId}
               selectedTagName={selectedTagName}
+              allPages={pages}
               allTags={tags}
+              onPageClick={handleSelectPage}
               onTagClick={handleSelectTag}
               onDateClick={handleSelectDate}
               onDataChange={handleDataChange}

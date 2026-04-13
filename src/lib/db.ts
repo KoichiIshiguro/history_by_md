@@ -35,7 +35,7 @@ function initDb(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS blocks (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
-      date TEXT NOT NULL,
+      date TEXT NOT NULL DEFAULT '',
       content TEXT NOT NULL DEFAULT '',
       indent_level INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL DEFAULT 0,
@@ -50,12 +50,9 @@ function initDb(db: Database.Database) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       user_id TEXT NOT NULL,
-      parent_id TEXT,
-      sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(name, user_id),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (parent_id) REFERENCES tags(id) ON DELETE SET NULL
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS block_tags (
@@ -66,28 +63,47 @@ function initDb(db: Database.Database) {
       FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS pages (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      parent_id TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(name, user_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (parent_id) REFERENCES pages(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS block_pages (
+      block_id TEXT NOT NULL,
+      page_id TEXT NOT NULL,
+      PRIMARY KEY (block_id, page_id),
+      FOREIGN KEY (block_id) REFERENCES blocks(id) ON DELETE CASCADE,
+      FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_blocks_user_date ON blocks(user_id, date);
     CREATE INDEX IF NOT EXISTS idx_blocks_parent ON blocks(parent_id);
     CREATE INDEX IF NOT EXISTS idx_tags_user ON tags(user_id);
-    CREATE INDEX IF NOT EXISTS idx_tags_parent ON tags(parent_id);
     CREATE INDEX IF NOT EXISTS idx_block_tags_tag ON block_tags(tag_id);
+    CREATE INDEX IF NOT EXISTS idx_pages_user ON pages(user_id);
+    CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_id);
+    CREATE INDEX IF NOT EXISTS idx_block_pages_page ON block_pages(page_id);
   `);
 
-  // Migration: add parent_id and sort_order to tags if missing
-  const cols = db.prepare("PRAGMA table_info(tags)").all() as { name: string }[];
-  const colNames = cols.map((c) => c.name);
-  if (!colNames.includes("parent_id")) {
-    db.exec("ALTER TABLE tags ADD COLUMN parent_id TEXT REFERENCES tags(id) ON DELETE SET NULL");
-  }
-  if (!colNames.includes("sort_order")) {
-    db.exec("ALTER TABLE tags ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
-  }
-
-  // Migration: add tag_id to blocks for page blocks
+  // Migration: add page_id to blocks (for page-owned content blocks)
   const blockCols = db.prepare("PRAGMA table_info(blocks)").all() as { name: string }[];
   const blockColNames = blockCols.map((c) => c.name);
-  if (!blockColNames.includes("tag_id")) {
-    db.exec("ALTER TABLE blocks ADD COLUMN tag_id TEXT REFERENCES tags(id) ON DELETE CASCADE");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_tag ON blocks(tag_id)");
+  if (!blockColNames.includes("page_id")) {
+    db.exec("ALTER TABLE blocks ADD COLUMN page_id TEXT REFERENCES pages(id) ON DELETE CASCADE");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_page ON blocks(page_id)");
+  }
+
+  // Migration: add parent_id/sort_order to tags if they exist from old schema (keep for compat)
+  const tagCols = db.prepare("PRAGMA table_info(tags)").all() as { name: string }[];
+  const tagColNames = tagCols.map((c) => c.name);
+  if (!tagColNames.includes("parent_id")) {
+    // Old schema without parent_id - fine, tags are flat now
   }
 }

@@ -11,43 +11,66 @@ export async function GET(request: NextRequest) {
   const db = getDb();
 
   const date = request.nextUrl.searchParams.get("date");
+  const pageId = request.nextUrl.searchParams.get("pageId");
   const tagId = request.nextUrl.searchParams.get("tagId");
 
-  if (tagId) {
-    // Page blocks: blocks directly on this tag page (no date association)
+  if (pageId) {
+    // Page view: 3 sections
+    // 1. Page's own content blocks (page_id = pageId)
     const pageBlocks = db
       .prepare(
-        `SELECT b.*, '' as tag_ids, 1 as is_page_block
-         FROM blocks b
-         WHERE b.tag_id = ? AND b.user_id = ?
+        `SELECT b.* FROM blocks b
+         WHERE b.page_id = ? AND b.user_id = ?
          ORDER BY b.sort_order ASC`
       )
-      .all(tagId, user.id);
+      .all(pageId, user.id);
 
-    // Referenced blocks: blocks from dates that have this tag
-    const refBlocks = db
+    // 2. References from other pages (blocks on other pages that mention this page via {{page}})
+    const pageRefs = db
       .prepare(
-        `SELECT b.*, GROUP_CONCAT(DISTINCT bt2.tag_id) as tag_ids, 0 as is_page_block
+        `SELECT b.*, p.name as source_page_name, p.id as source_page_id
+         FROM blocks b
+         JOIN block_pages bp ON bp.block_id = b.id
+         JOIN pages p ON p.id = b.page_id
+         WHERE bp.page_id = ? AND b.user_id = ? AND b.page_id != ?
+         ORDER BY b.updated_at DESC, b.sort_order ASC`
+      )
+      .all(pageId, user.id, pageId);
+
+    // 3. References from dates (date blocks that mention this page)
+    const dateRefs = db
+      .prepare(
+        `SELECT b.*
+         FROM blocks b
+         JOIN block_pages bp ON bp.block_id = b.id
+         WHERE bp.page_id = ? AND b.user_id = ? AND b.page_id IS NULL AND b.date != ''
+         ORDER BY b.date DESC, b.sort_order ASC`
+      )
+      .all(pageId, user.id);
+
+    return Response.json({ pageBlocks, pageRefs, dateRefs });
+  }
+
+  if (tagId) {
+    // Tag view: blocks that have this tag
+    const blocks = db
+      .prepare(
+        `SELECT b.*
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
-         LEFT JOIN block_tags bt2 ON bt2.block_id = b.id
-         WHERE bt.tag_id = ? AND b.user_id = ? AND b.tag_id IS NULL
-         GROUP BY b.id
+         WHERE bt.tag_id = ? AND b.user_id = ?
          ORDER BY b.date DESC, b.sort_order ASC`
       )
       .all(tagId, user.id);
-
-    return Response.json({ pageBlocks, refBlocks });
+    return Response.json(blocks);
   }
 
   if (date) {
     const blocks = db
       .prepare(
-        `SELECT b.*, GROUP_CONCAT(bt.tag_id) as tag_ids
+        `SELECT b.*
          FROM blocks b
-         LEFT JOIN block_tags bt ON bt.block_id = b.id
-         WHERE b.user_id = ? AND b.date = ?
-         GROUP BY b.id
+         WHERE b.user_id = ? AND b.date = ? AND b.page_id IS NULL
          ORDER BY b.sort_order ASC`
       )
       .all(user.id, date);
@@ -57,102 +80,10 @@ export async function GET(request: NextRequest) {
   // Get recent dates
   const dates = db
     .prepare(
-      `SELECT DISTINCT date FROM blocks WHERE user_id = ? ORDER BY date DESC LIMIT 30`
+      `SELECT DISTINCT date FROM blocks WHERE user_id = ? AND date != '' AND page_id IS NULL ORDER BY date DESC LIMIT 30`
     )
     .all(user.id);
   return Response.json(dates);
-}
-
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.email) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const user = session.user as any;
-  const db = getDb();
-  const body = await request.json();
-  const { date, content, indent_level, sort_order, parent_id, tags, tag_id } = body;
-
-  const id = crypto.randomUUID();
-  db.prepare(
-    `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, parent_id, tag_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, user.id, date || "", content || "", indent_level || 0, sort_order || 0, parent_id || null, tag_id || null);
-
-  // Handle tags
-  if (tags && tags.length > 0) {
-    for (const tagName of tags) {
-      let tag = db
-        .prepare("SELECT id FROM tags WHERE name = ? AND user_id = ?")
-        .get(tagName, user.id) as { id: string } | undefined;
-      if (!tag) {
-        const tagId = crypto.randomUUID();
-        db.prepare("INSERT INTO tags (id, name, user_id) VALUES (?, ?, ?)").run(
-          tagId,
-          tagName,
-          user.id
-        );
-        tag = { id: tagId };
-      }
-      db.prepare(
-        "INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)"
-      ).run(id, tag.id);
-    }
-  }
-
-  return Response.json({ id });
-}
-
-function extractTags(content: string): string[] {
-  const matches = content.match(/#([^\s#]+)/g);
-  if (!matches) return [];
-  return matches.map((m) => m.slice(1));
-}
-
-function recomputeTagsForDate(db: any, userId: string, date: string) {
-  // Get all blocks for this date in order
-  const allBlocks = db
-    .prepare("SELECT id, content, indent_level FROM blocks WHERE user_id = ? AND date = ? ORDER BY sort_order ASC")
-    .all(userId, date) as { id: string; content: string; indent_level: number }[];
-
-  // Recompute tags using the hierarchy logic
-  const tagStack: Array<{ tags: string[]; indent: number }> = [];
-
-  const findTag = db.prepare("SELECT id FROM tags WHERE name = ? AND user_id = ?");
-  const insertTag = db.prepare("INSERT OR IGNORE INTO tags (id, name, user_id) VALUES (?, ?, ?)");
-  const insertBlockTag = db.prepare("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)");
-
-  for (const block of allBlocks) {
-    // Pop tags from stack at same or deeper indent
-    while (tagStack.length > 0 && tagStack[tagStack.length - 1].indent >= block.indent_level) {
-      tagStack.pop();
-    }
-
-    // Collect inherited tags
-    const activeTags: string[] = [];
-    for (const entry of tagStack) {
-      activeTags.push(...entry.tags);
-    }
-
-    const ownTags = extractTags(block.content);
-    const allTags = [...new Set([...activeTags, ...ownTags])];
-
-    // Clear existing and re-insert
-    db.prepare("DELETE FROM block_tags WHERE block_id = ?").run(block.id);
-    for (const tagName of allTags) {
-      let tag = findTag.get(tagName, userId) as { id: string } | undefined;
-      if (!tag) {
-        const tagId = crypto.randomUUID();
-        insertTag.run(tagId, tagName, userId);
-        tag = { id: tagId };
-      }
-      insertBlockTag.run(block.id, tag.id);
-    }
-
-    if (ownTags.length > 0) {
-      tagStack.push({ tags: ownTags, indent: block.indent_level });
-    }
-  }
 }
 
 export async function PUT(request: NextRequest) {
@@ -165,8 +96,7 @@ export async function PUT(request: NextRequest) {
   const body = await request.json();
   const { id, content, indent_level, sort_order } = body;
 
-  // Get the block's date and tag_id for recomputing tags
-  const block = db.prepare("SELECT date, tag_id FROM blocks WHERE id = ? AND user_id = ?").get(id, user.id) as { date: string; tag_id: string | null } | undefined;
+  const block = db.prepare("SELECT date, page_id FROM blocks WHERE id = ? AND user_id = ?").get(id, user.id) as { date: string; page_id: string | null } | undefined;
   if (!block) {
     return Response.json({ error: "Block not found" }, { status: 404 });
   }
@@ -177,9 +107,9 @@ export async function PUT(request: NextRequest) {
        WHERE id = ? AND user_id = ?`
     ).run(content, indent_level || 0, sort_order || 0, id, user.id);
 
-    // Only recompute tags for date blocks (page blocks don't have tag hierarchy)
-    if (!block.tag_id && block.date) {
-      recomputeTagsForDate(db, user.id, block.date);
+    // Recompute tags and page refs for this block's context
+    if (!block.page_id && block.date) {
+      recomputeLinksForDate(db, user.id, block.date);
     }
   });
 
@@ -197,4 +127,76 @@ export async function DELETE(request: NextRequest) {
   const { id } = await request.json();
   db.prepare("DELETE FROM blocks WHERE id = ? AND user_id = ?").run(id, user.id);
   return Response.json({ ok: true });
+}
+
+// Extract #tags from content
+function extractTags(content: string): string[] {
+  const matches = content.match(/#([^\s#{}]+)/g);
+  if (!matches) return [];
+  return matches.map((m) => m.slice(1));
+}
+
+// Extract {{page}} references from content
+function extractPageRefs(content: string): string[] {
+  const matches = content.match(/\{\{([^}]+)\}\}/g);
+  if (!matches) return [];
+  return matches.map((m) => m.slice(2, -2).trim());
+}
+
+function recomputeLinksForDate(db: any, userId: string, date: string) {
+  const allBlocks = db
+    .prepare("SELECT id, content, indent_level FROM blocks WHERE user_id = ? AND date = ? AND page_id IS NULL ORDER BY sort_order ASC")
+    .all(userId, date) as { id: string; content: string; indent_level: number }[];
+
+  const tagStack: Array<{ tags: string[]; indent: number }> = [];
+  const pageStack: Array<{ pages: string[]; indent: number }> = [];
+
+  const findTag = db.prepare("SELECT id FROM tags WHERE name = ? AND user_id = ?");
+  const insertTag = db.prepare("INSERT OR IGNORE INTO tags (id, name, user_id) VALUES (?, ?, ?)");
+  const insertBlockTag = db.prepare("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)");
+  const findPage = db.prepare("SELECT id FROM pages WHERE name = ? AND user_id = ?");
+  const insertPage = db.prepare("INSERT OR IGNORE INTO pages (id, name, user_id, sort_order) VALUES (?, ?, ?, 0)");
+  const insertBlockPage = db.prepare("INSERT OR IGNORE INTO block_pages (block_id, page_id) VALUES (?, ?)");
+
+  for (const block of allBlocks) {
+    while (tagStack.length > 0 && tagStack[tagStack.length - 1].indent >= block.indent_level) tagStack.pop();
+    while (pageStack.length > 0 && pageStack[pageStack.length - 1].indent >= block.indent_level) pageStack.pop();
+
+    const activeTags: string[] = [];
+    for (const entry of tagStack) activeTags.push(...entry.tags);
+    const activePages: string[] = [];
+    for (const entry of pageStack) activePages.push(...entry.pages);
+
+    const ownTags = extractTags(block.content);
+    const ownPages = extractPageRefs(block.content);
+    const allTags = [...new Set([...activeTags, ...ownTags])];
+    const allPages = [...new Set([...activePages, ...ownPages])];
+
+    // Clear and re-insert
+    db.prepare("DELETE FROM block_tags WHERE block_id = ?").run(block.id);
+    db.prepare("DELETE FROM block_pages WHERE block_id = ?").run(block.id);
+
+    for (const tagName of allTags) {
+      let tag = findTag.get(tagName, userId) as { id: string } | undefined;
+      if (!tag) {
+        const tagId = crypto.randomUUID();
+        insertTag.run(tagId, tagName, userId);
+        tag = { id: tagId };
+      }
+      insertBlockTag.run(block.id, tag.id);
+    }
+
+    for (const pageName of allPages) {
+      let page = findPage.get(pageName, userId) as { id: string } | undefined;
+      if (!page) {
+        const pageId = crypto.randomUUID();
+        insertPage.run(pageId, pageName, userId);
+        page = { id: pageId };
+      }
+      insertBlockPage.run(block.id, page.id);
+    }
+
+    if (ownTags.length > 0) tagStack.push({ tags: ownTags, indent: block.indent_level });
+    if (ownPages.length > 0) pageStack.push({ pages: ownPages, indent: block.indent_level });
+  }
 }

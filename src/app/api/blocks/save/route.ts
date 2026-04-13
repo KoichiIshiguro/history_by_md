@@ -3,52 +3,45 @@ import { getDb } from "@/lib/db";
 import { NextRequest } from "next/server";
 
 function extractTags(content: string): string[] {
-  const matches = content.match(/#([^\s#]+)/g);
+  const matches = content.match(/#([^\s#{}]+)/g);
   if (!matches) return [];
   return matches.map((m) => m.slice(1));
 }
 
-// Given an ordered list of blocks, compute which tags apply to each block.
-// A #tag on a block "owns" all subsequent blocks that are indented deeper,
-// until a block at the same or shallower indent level is reached.
-function computeBlockTags(
-  blocks: Array<{ content: string; indent_level: number }>
-): string[][] {
-  const result: string[][] = [];
-  // Stack of active tags: { tagNames, indent_level }
-  const tagStack: Array<{ tags: string[]; indent: number }> = [];
-
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i];
-    const blockIndent = block.indent_level;
-
-    // Pop tags from stack that are at same or deeper indent than current block
-    while (tagStack.length > 0 && tagStack[tagStack.length - 1].indent >= blockIndent) {
-      tagStack.pop();
-    }
-
-    // Collect all active tags from the stack
-    const activeTags: string[] = [];
-    for (const entry of tagStack) {
-      activeTags.push(...entry.tags);
-    }
-
-    // Extract tags from this block's own content
-    const ownTags = extractTags(block.content);
-
-    // This block gets: inherited tags + own tags
-    result.push([...new Set([...activeTags, ...ownTags])]);
-
-    // If this block has tags, push onto stack for children
-    if (ownTags.length > 0) {
-      tagStack.push({ tags: ownTags, indent: blockIndent });
-    }
-  }
-
-  return result;
+function extractPageRefs(content: string): string[] {
+  const matches = content.match(/\{\{([^}]+)\}\}/g);
+  if (!matches) return [];
+  return matches.map((m) => m.slice(2, -2).trim());
 }
 
-// Bulk save endpoint - saves entire page content at once
+function computeBlockLinks(blocks: Array<{ content: string; indent_level: number }>) {
+  const tagResults: string[][] = [];
+  const pageResults: string[][] = [];
+  const tagStack: Array<{ tags: string[]; indent: number }> = [];
+  const pageStack: Array<{ pages: string[]; indent: number }> = [];
+
+  for (const block of blocks) {
+    while (tagStack.length > 0 && tagStack[tagStack.length - 1].indent >= block.indent_level) tagStack.pop();
+    while (pageStack.length > 0 && pageStack[pageStack.length - 1].indent >= block.indent_level) pageStack.pop();
+
+    const activeTags: string[] = [];
+    for (const entry of tagStack) activeTags.push(...entry.tags);
+    const activePages: string[] = [];
+    for (const entry of pageStack) activePages.push(...entry.pages);
+
+    const ownTags = extractTags(block.content);
+    const ownPages = extractPageRefs(block.content);
+
+    tagResults.push([...new Set([...activeTags, ...ownTags])]);
+    pageResults.push([...new Set([...activePages, ...ownPages])]);
+
+    if (ownTags.length > 0) tagStack.push({ tags: ownTags, indent: block.indent_level });
+    if (ownPages.length > 0) pageStack.push({ pages: ownPages, indent: block.indent_level });
+  }
+
+  return { tagResults, pageResults };
+}
+
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -57,50 +50,55 @@ export async function POST(request: NextRequest) {
   const user = session.user as any;
   const db = getDb();
   const body = await request.json();
-  const { date, tagId, blocks } = body as {
+  const { date, pageId, blocks } = body as {
     date?: string;
-    tagId?: string;
+    pageId?: string;
     blocks: Array<{
       id?: string;
       content: string;
       indent_level: number;
       sort_order: number;
-      parent_id?: string;
     }>;
   };
 
-  if (tagId) {
-    // Tag page save: blocks belong directly to a tag page
+  const { tagResults, pageResults } = computeBlockLinks(blocks);
+
+  const findTag = db.prepare("SELECT id FROM tags WHERE name = ? AND user_id = ?");
+  const insertTag = db.prepare("INSERT OR IGNORE INTO tags (id, name, user_id) VALUES (?, ?, ?)");
+  const insertBlockTag = db.prepare("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)");
+  const findPage = db.prepare("SELECT id FROM pages WHERE name = ? AND user_id = ?");
+  const insertPage = db.prepare("INSERT OR IGNORE INTO pages (id, name, user_id, sort_order) VALUES (?, ?, ?, 0)");
+  const insertBlockPage = db.prepare("INSERT OR IGNORE INTO block_pages (block_id, page_id) VALUES (?, ?)");
+
+  if (pageId) {
+    // Page content save
     const saveTransaction = db.transaction(() => {
-      // Delete existing page blocks and their block_tags
-      const existing = db.prepare("SELECT id FROM blocks WHERE user_id = ? AND tag_id = ?").all(user.id, tagId) as { id: string }[];
+      const existing = db.prepare("SELECT id FROM blocks WHERE user_id = ? AND page_id = ?").all(user.id, pageId) as { id: string }[];
       for (const b of existing) {
         db.prepare("DELETE FROM block_tags WHERE block_id = ?").run(b.id);
+        db.prepare("DELETE FROM block_pages WHERE block_id = ?").run(b.id);
       }
-      db.prepare("DELETE FROM blocks WHERE user_id = ? AND tag_id = ?").run(user.id, tagId);
+      db.prepare("DELETE FROM blocks WHERE user_id = ? AND page_id = ?").run(user.id, pageId);
 
       const insertBlock = db.prepare(
-        `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, tag_id)
+        `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, page_id)
          VALUES (?, ?, '', ?, ?, ?, ?)`
       );
-      const findTag = db.prepare("SELECT id FROM tags WHERE name = ? AND user_id = ?");
-      const insertTag = db.prepare("INSERT OR IGNORE INTO tags (id, name, user_id) VALUES (?, ?, ?)");
-      const insertBlockTag = db.prepare("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)");
 
-      for (const block of blocks) {
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
         const blockId = block.id || crypto.randomUUID();
-        insertBlock.run(blockId, user.id, block.content, block.indent_level, block.sort_order, tagId);
+        insertBlock.run(blockId, user.id, block.content, block.indent_level, block.sort_order, pageId);
 
-        // Extract and create tags from content
-        const tagNames = extractTags(block.content);
-        for (const tagName of tagNames) {
+        for (const tagName of tagResults[i]) {
           let tag = findTag.get(tagName, user.id) as { id: string } | undefined;
-          if (!tag) {
-            const newTagId = crypto.randomUUID();
-            insertTag.run(newTagId, tagName, user.id);
-            tag = { id: newTagId };
-          }
+          if (!tag) { const tid = crypto.randomUUID(); insertTag.run(tid, tagName, user.id); tag = { id: tid }; }
           insertBlockTag.run(blockId, tag.id);
+        }
+        for (const pageName of pageResults[i]) {
+          let page = findPage.get(pageName, user.id) as { id: string } | undefined;
+          if (!page) { const pid = crypto.randomUUID(); insertPage.run(pid, pageName, user.id); page = { id: pid }; }
+          insertBlockPage.run(blockId, page.id);
         }
       }
     });
@@ -108,57 +106,37 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: true });
   }
 
-  // Date page save: existing behavior
-  const blockTags = computeBlockTags(blocks);
-
+  // Date page save
   const saveTransaction = db.transaction(() => {
-    const existingBlocks = db
-      .prepare("SELECT id FROM blocks WHERE user_id = ? AND date = ? AND tag_id IS NULL")
-      .all(user.id, date) as { id: string }[];
-    for (const block of existingBlocks) {
-      db.prepare("DELETE FROM block_tags WHERE block_id = ?").run(block.id);
+    const existing = db.prepare("SELECT id FROM blocks WHERE user_id = ? AND date = ? AND page_id IS NULL").all(user.id, date) as { id: string }[];
+    for (const b of existing) {
+      db.prepare("DELETE FROM block_tags WHERE block_id = ?").run(b.id);
+      db.prepare("DELETE FROM block_pages WHERE block_id = ?").run(b.id);
     }
-    db.prepare("DELETE FROM blocks WHERE user_id = ? AND date = ? AND tag_id IS NULL").run(user.id, date);
+    db.prepare("DELETE FROM blocks WHERE user_id = ? AND date = ? AND page_id IS NULL").run(user.id, date);
 
     const insertBlock = db.prepare(
-      `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, parent_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?)`
     );
-    const insertTag = db.prepare(
-      "INSERT OR IGNORE INTO tags (id, name, user_id) VALUES (?, ?, ?)"
-    );
-    const insertBlockTag = db.prepare(
-      "INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)"
-    );
-    const findTag = db.prepare("SELECT id FROM tags WHERE name = ? AND user_id = ?");
 
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
-      const tags = blockTags[i];
       const blockId = block.id || crypto.randomUUID();
+      insertBlock.run(blockId, user.id, date, block.content, block.indent_level, block.sort_order);
 
-      insertBlock.run(
-        blockId,
-        user.id,
-        date,
-        block.content,
-        block.indent_level,
-        block.sort_order,
-        block.parent_id || null
-      );
-
-      for (const tagName of tags) {
+      for (const tagName of tagResults[i]) {
         let tag = findTag.get(tagName, user.id) as { id: string } | undefined;
-        if (!tag) {
-          const tagId = crypto.randomUUID();
-          insertTag.run(tagId, tagName, user.id);
-          tag = { id: tagId };
-        }
+        if (!tag) { const tid = crypto.randomUUID(); insertTag.run(tid, tagName, user.id); tag = { id: tid }; }
         insertBlockTag.run(blockId, tag.id);
+      }
+      for (const pageName of pageResults[i]) {
+        let page = findPage.get(pageName, user.id) as { id: string } | undefined;
+        if (!page) { const pid = crypto.randomUUID(); insertPage.run(pid, pageName, user.id); page = { id: pid }; }
+        insertBlockPage.run(blockId, page.id);
       }
     }
   });
-
   saveTransaction();
   return Response.json({ ok: true });
 }

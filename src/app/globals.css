@@ -56,6 +56,20 @@ body {
   background: #d2e3fc;
 }
 
+.page-link {
+  background: #e8f5e9;
+  color: #2e7d32;
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.page-link:hover {
+  background: #c8e6c9;
+}
+
 .date-link {
   background: #fff3e0;
   color: #e65100;
