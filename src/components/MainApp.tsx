@@ -144,6 +144,14 @@ export default function MainApp({ user, isAdmin }: Props) {
     fetchDates();
   }, [fetchPages, fetchTags, fetchDates]);
 
+  // Sync selectedPageName when pages list updates (e.g. after rename)
+  useEffect(() => {
+    if (viewMode === "page" && selectedPageId) {
+      const page = pages.find((p) => p.id === selectedPageId);
+      if (page) setSelectedPageName(page.full_path || page.name);
+    }
+  }, [pages, viewMode, selectedPageId]);
+
   const handleSelectPage = (pageId: string, pageName: string) => {
     setViewMode("page");
     setSelectedPageId(pageId);
