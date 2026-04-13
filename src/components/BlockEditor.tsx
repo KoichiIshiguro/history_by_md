@@ -72,6 +72,10 @@ function preprocessCustomSyntax(content: string, allPages: PageInfo[], allTags: 
     return `<span class="page-link" data-page-id="${dataId}" data-page-name="${trimmed}">${trimmed}</span>`;
   });
 
+  // !action / !done prefix → styled span
+  result = result.replace(/^!(action)\s/i, '<span class="action-flag action-open">!action</span> ');
+  result = result.replace(/^!(done)\s/i, '<span class="action-flag action-done">!done</span> ');
+
   // #tag → HTML span (but not inside code blocks or HTML tags)
   result = result.replace(/(^|[^&\w])#([^\s#{}()<>]+)/g, (_match, prefix: string, tagName: string) => {
     const tag = allTags.find((t) => t.name === tagName);
@@ -620,6 +624,47 @@ export default function BlockEditor({
     setBlocks(updated); startEditing(newBlock); debouncedSave(updated);
   };
 
+  // Extract action items from all refs (dateRefs + pageRefs)
+  const allRefBlocks = [...dateRefs, ...pageRefs];
+  const actionBlocks: Array<Block & { isDone: boolean; childBlocks: Block[] }> = [];
+  for (let i = 0; i < allRefBlocks.length; i++) {
+    const b = allRefBlocks[i];
+    const actionMatch = b.content.match(/^!(action|done)\s*/i);
+    if (actionMatch) {
+      const isDone = actionMatch[1].toLowerCase() === "done";
+      // Collect child blocks (higher indent following this block in same date group)
+      const children: Block[] = [];
+      for (let j = i + 1; j < allRefBlocks.length; j++) {
+        const child = allRefBlocks[j];
+        if (child.date === b.date && child.indent_level > b.indent_level) {
+          children.push(child);
+        } else if (child.date === b.date && child.indent_level <= b.indent_level) {
+          break;
+        } else {
+          break;
+        }
+      }
+      actionBlocks.push({ ...b, isDone, childBlocks: children });
+    }
+  }
+  const openActions = actionBlocks.filter((a) => !a.isDone);
+  const doneActions = actionBlocks.filter((a) => a.isDone);
+
+  const toggleAction = async (block: Block, currentlyDone: boolean) => {
+    const newContent = currentlyDone
+      ? block.content.replace(/^!done\s*/i, "!action ")
+      : block.content.replace(/^!action\s*/i, "!done ");
+    await fetch("/api/blocks", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: block.id, content: newContent, indent_level: block.indent_level, sort_order: block.sort_order }),
+    });
+    // Update local state
+    const updateList = (list: Block[]) => list.map((b) => b.id === block.id ? { ...b, content: newContent } : b);
+    setDateRefs(updateList(dateRefs));
+    setPageRefs(updateList(pageRefs));
+  };
+
   const groupedDateRefs = dateRefs.reduce((acc, b) => {
     if (!acc[b.date]) acc[b.date] = [];
     acc[b.date].push(b);
@@ -664,6 +709,26 @@ export default function BlockEditor({
       onKeyUp={(e) => { if (e.key === "Shift") shiftHeldRef.current = false; }}>
       {viewMode === "page" ? (
         <>
+          {/* 0. Actions */}
+          {(openActions.length > 0 || doneActions.length > 0) && (
+            <div className="mb-6">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">アクション</h3>
+              <div className="rounded-lg border border-gray-200 bg-white p-3">
+                {openActions.map((action) => (
+                  <ActionItem key={action.id} action={action} onToggle={() => toggleAction(action, false)}
+                    allPages={allPages} allTags={allTags} onPageClick={onPageClick} onTagClick={onTagClick} onDateClick={onDateClick} />
+                ))}
+                {doneActions.length > 0 && openActions.length > 0 && (
+                  <div className="my-2 border-t border-gray-100" />
+                )}
+                {doneActions.map((action) => (
+                  <ActionItem key={action.id} action={action} onToggle={() => toggleAction(action, true)}
+                    allPages={allPages} allTags={allTags} onPageClick={onPageClick} onTagClick={onTagClick} onDateClick={onDateClick} />
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 1. Page content */}
           <div className="rounded-lg border border-gray-200 bg-white p-3">
             {blocks.map((block, i) => <BlockLine key={block.id} {...blockLineProps(block, i)} />)}
@@ -794,6 +859,52 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
             : "\u00A0"}
         </div>
       )}
+    </div>
+  );
+}
+
+function ActionItem({ action, onToggle, allPages, allTags, onPageClick, onTagClick, onDateClick }: {
+  action: Block & { isDone: boolean; childBlocks: Block[] };
+  onToggle: () => void;
+  allPages: PageInfo[]; allTags: TagInfo[];
+  onPageClick: (id: string, name: string) => void;
+  onTagClick: (id: string, name: string) => void;
+  onDateClick: (date: string) => void;
+}) {
+  // Strip !action / !done prefix for display
+  const displayContent = action.content.replace(/^!(action|done)\s*/i, "");
+
+  return (
+    <div className={`flex items-start gap-2 py-1 ${action.isDone ? "opacity-50" : ""}`}>
+      <button onClick={onToggle}
+        className={`mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border ${
+          action.isDone ? "border-green-400 bg-green-100 text-green-600" : "border-gray-300 bg-white hover:border-blue-400"
+        }`}>
+        {action.isDone && (
+          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        )}
+      </button>
+      <div className="flex-1 min-w-0">
+        <div className={`text-sm ${action.isDone ? "line-through text-gray-400" : "text-gray-800"}`}>
+          <MarkdownContent content={displayContent} allPages={allPages} allTags={allTags}
+            onPageClick={onPageClick} onTagClick={onTagClick} onDateClick={onDateClick} />
+        </div>
+        {action.childBlocks.length > 0 && (
+          <div className={`mt-0.5 pl-2 border-l-2 ${action.isDone ? "border-gray-200" : "border-gray-300"}`}>
+            {action.childBlocks.map((child) => (
+              <div key={child.id} className={`text-xs py-0.5 ${action.isDone ? "text-gray-400" : "text-gray-600"}`}>
+                <MarkdownContent content={child.content} allPages={allPages} allTags={allTags}
+                  onPageClick={onPageClick} onTagClick={onTagClick} onDateClick={onDateClick} />
+              </div>
+            ))}
+          </div>
+        )}
+        <span className="text-xs text-gray-400 ml-1">
+          <span className="date-link cursor-pointer text-xs" onClick={() => onDateClick(action.date)}>{action.date}</span>
+        </span>
+      </div>
     </div>
   );
 }

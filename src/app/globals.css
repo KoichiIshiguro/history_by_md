@@ -211,6 +211,28 @@ body {
   margin: 2px 0;
 }
 
+/* Action flags */
+.action-flag {
+  display: inline-block;
+  padding: 0px 6px;
+  border-radius: 3px;
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+.action-open {
+  background: #fef3c7;
+  color: #d97706;
+  border: 1px solid #fbbf24;
+}
+.action-done {
+  background: #d1fae5;
+  color: #059669;
+  border: 1px solid #6ee7b7;
+}
+
 /* Modal animation */
 @keyframes modal-in {
   from { opacity: 0; transform: scale(0.95) translateY(4px); }
