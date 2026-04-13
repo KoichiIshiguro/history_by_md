@@ -157,13 +157,20 @@ export default function Sidebar({
 
   const confirmDeletePage = async () => {
     if (!deleteTarget) return;
+    const deletedId = deleteTarget.id;
     await fetch("/api/pages", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: deleteTarget.id }),
+      body: JSON.stringify({ id: deletedId }),
     });
     onPagesChange();
     setDeleteTarget(null);
+    // If the deleted page was currently open, navigate to today
+    if (selectedPageId === deletedId) {
+      const d = new Date();
+      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      onSelectDate(today);
+    }
   };
 
   const click = (action: () => void) => { action(); onCloseMobile(); };
