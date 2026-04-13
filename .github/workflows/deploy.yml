@@ -38,8 +38,7 @@ jobs:
             sudo systemctl stop histmd
             pkill -f "next build" || true
 
-            # Kill stale next-server processes (orphaned from previous deploys)
-            pkill -f "next-server" || true
+            # Note: invoice.saltybullet.com also runs next-server - do NOT pkill next-server
 
             # Pull latest
             cd /var/www/histmd.saltybullet.com
