@@ -97,7 +97,8 @@ export default function Sidebar({
   const [addingChildOf, setAddingChildOf] = useState<string | null>(null);
   const [tagSearch, setTagSearch] = useState("");
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(() => {
-    const now = new Date().toISOString().slice(0, 7);
+    const d = new Date();
+    const now = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     return new Set([now]);
   });
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
@@ -167,7 +168,8 @@ export default function Sidebar({
 
   const click = (action: () => void) => { action(); onCloseMobile(); };
 
-  const today = new Date().toISOString().split("T")[0];
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
   return (
     <div className="flex h-full flex-col">

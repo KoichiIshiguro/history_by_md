@@ -10,6 +10,10 @@ import TemplateEditor from "./TemplateEditor";
 
 type ViewMode = "date" | "page" | "tag" | "admin" | "actions" | "templates";
 
+function toLocalDateString(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 interface Page {
   id: string;
   name: string;
@@ -31,9 +35,7 @@ interface Props {
 
 export default function MainApp({ user, isAdmin }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>("date");
-  const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
+  const [selectedDate, setSelectedDate] = useState(() => toLocalDateString(new Date()));
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [selectedPageName, setSelectedPageName] = useState("");
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
@@ -278,14 +280,14 @@ export default function MainApp({ user, isAdmin }: Props) {
                   onClick={() => {
                     const d = new Date(selectedDate);
                     d.setDate(d.getDate() - 1);
-                    setSelectedDate(d.toISOString().split("T")[0]);
+                    setSelectedDate(toLocalDateString(d));
                   }}
                   className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-theme-50"
                 >
                   &larr;
                 </button>
                 <button
-                  onClick={() => setSelectedDate(new Date().toISOString().split("T")[0])}
+                  onClick={() => setSelectedDate(toLocalDateString(new Date()))}
                   className="rounded px-2 py-1 text-sm text-theme-600 hover:bg-theme-50 font-medium"
                 >
                   今日
@@ -294,7 +296,7 @@ export default function MainApp({ user, isAdmin }: Props) {
                   onClick={() => {
                     const d = new Date(selectedDate);
                     d.setDate(d.getDate() + 1);
-                    setSelectedDate(d.toISOString().split("T")[0]);
+                    setSelectedDate(toLocalDateString(d));
                   }}
                   className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-theme-50"
                 >
