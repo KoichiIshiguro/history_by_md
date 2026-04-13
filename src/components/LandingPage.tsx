@@ -7,12 +7,12 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
     <div className="min-h-screen bg-white">
       {/* Hero */}
       <header className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-orange-50 via-white to-orange-50" />
+        <div className="absolute inset-0 bg-gradient-to-br from-theme-50 via-white to-theme-50" />
         <div className="relative mx-auto max-w-5xl px-6 py-20 md:py-32">
           <div className="flex flex-col items-center text-center md:flex-row md:text-left md:gap-12">
             <div className="flex-1">
               <h1 className="text-5xl font-bold tracking-tight text-gray-900 md:text-6xl">
-                history<span className="text-orange-500">-md</span>
+                history<span className="text-theme-500">-md</span>
               </h1>
               <p className="mt-4 text-xl text-gray-600 leading-relaxed">
                 思考を整理し、アイデアを繋げる。
@@ -23,7 +23,7 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
               <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center md:justify-start">
                 <button
                   onClick={() => signIn("google")}
-                  className="flex items-center justify-center gap-3 rounded-xl bg-orange-500 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-orange-500/25 transition hover:bg-orange-600 hover:shadow-xl hover:shadow-orange-500/30"
+                  className="flex items-center justify-center gap-3 rounded-xl bg-theme-500 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-theme-500/25 transition hover:bg-theme-600 hover:shadow-xl hover:shadow-theme-500/30"
                 >
                   <svg className="h-5 w-5" viewBox="0 0 24 24">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#fff" fillOpacity="0.8"/>
@@ -36,7 +36,7 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
                 {isDev && (
                   <button
                     onClick={() => signIn("credentials", { redirect: true, callbackUrl: "/" })}
-                    className="rounded-xl border-2 border-dashed border-orange-300 bg-orange-50 px-6 py-3.5 text-sm font-medium text-orange-600 transition hover:bg-orange-100"
+                    className="rounded-xl border-2 border-dashed border-theme-300 bg-theme-50 px-6 py-3.5 text-sm font-medium text-theme-600 transition hover:bg-theme-100"
                   >
                     Dev Login
                   </button>
@@ -84,15 +84,15 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
       </header>
 
       {/* Features */}
-      <section className="border-t border-orange-100 bg-white py-20">
+      <section className="border-t border-theme-100 bg-white py-20">
         <div className="mx-auto max-w-5xl px-6">
           <h2 className="text-center text-3xl font-bold text-gray-900">シンプルで強力なノート管理</h2>
           <p className="mx-auto mt-3 max-w-xl text-center text-gray-500">日々の記録、プロジェクト管理、ナレッジベースをひとつに。</p>
           <div className="mt-14 grid gap-8 md:grid-cols-3">
             {/* Feature 1 */}
-            <div className="rounded-2xl border border-orange-100 bg-orange-50/50 p-6">
-              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-orange-100">
-                <svg className="h-6 w-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="rounded-2xl border border-theme-100 bg-theme-50/50 p-6">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-theme-100">
+                <svg className="h-6 w-6 text-theme-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h10M4 18h6" />
                 </svg>
               </div>
@@ -102,9 +102,9 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
               </p>
             </div>
             {/* Feature 2 */}
-            <div className="rounded-2xl border border-orange-100 bg-orange-50/50 p-6">
-              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-orange-100">
-                <svg className="h-6 w-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="rounded-2xl border border-theme-100 bg-theme-50/50 p-6">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-theme-100">
+                <svg className="h-6 w-6 text-theme-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z" />
                 </svg>
               </div>
@@ -114,9 +114,9 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
               </p>
             </div>
             {/* Feature 3 */}
-            <div className="rounded-2xl border border-orange-100 bg-orange-50/50 p-6">
-              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-orange-100">
-                <svg className="h-6 w-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="rounded-2xl border border-theme-100 bg-theme-50/50 p-6">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-theme-100">
+                <svg className="h-6 w-6 text-theme-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                 </svg>
               </div>
@@ -130,7 +130,7 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
       </section>
 
       {/* How it works */}
-      <section className="border-t border-orange-100 bg-gradient-to-b from-orange-50/50 to-white py-20">
+      <section className="border-t border-theme-100 bg-gradient-to-b from-theme-50/50 to-white py-20">
         <div className="mx-auto max-w-5xl px-6">
           <h2 className="text-center text-3xl font-bold text-gray-900">使い方はシンプル</h2>
           <div className="mt-14 flex flex-col items-center gap-4 md:flex-row md:justify-center md:gap-0">
@@ -141,14 +141,14 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
             ].map((item, i) => (
               <div key={item.step} className="flex items-center gap-4 md:gap-0">
                 <div className="flex flex-col items-center text-center">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-orange-500 text-2xl font-bold text-white shadow-lg shadow-orange-500/20">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-theme-500 text-2xl font-bold text-white shadow-lg shadow-theme-500/20">
                     {item.step}
                   </div>
                   <h3 className="mt-3 text-lg font-semibold text-gray-900">{item.title}</h3>
                   <p className="mt-1 text-sm text-gray-500 max-w-[140px]">{item.desc}</p>
                 </div>
                 {i < 2 && (
-                  <svg className="hidden md:block mx-8 h-6 w-12 text-orange-300" fill="none" stroke="currentColor" viewBox="0 0 48 24">
+                  <svg className="hidden md:block mx-8 h-6 w-12 text-theme-300" fill="none" stroke="currentColor" viewBox="0 0 48 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 12h40m-6-6l6 6-6 6" />
                   </svg>
                 )}
@@ -159,10 +159,10 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-orange-100 bg-white py-8">
+      <footer className="border-t border-theme-100 bg-white py-8">
         <div className="mx-auto max-w-5xl px-6 text-center">
           <p className="text-lg font-bold text-gray-800">
-            history<span className="text-orange-500">-md</span>
+            history<span className="text-theme-500">-md</span>
           </p>
           <p className="mt-1 text-sm text-gray-400">&copy; {new Date().getFullYear()} history-md</p>
         </div>

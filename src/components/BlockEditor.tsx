@@ -73,8 +73,8 @@ export function preprocessCustomSyntax(content: string, allPages: PageInfo[], al
   });
 
   // !action / !done prefix → styled span
-  result = result.replace(/^!(action)\s/i, '<span class="action-flag action-open">!action</span> ');
-  result = result.replace(/^!(done)\s/i, '<span class="action-flag action-done">!done</span> ');
+  result = result.replace(/^!(action)\s/i, '<span class="action-flag action-open">\u25CF</span> ');
+  result = result.replace(/^!(done)\s/i, '<span class="action-flag action-done">\u25CF</span> ');
 
   // #tag → HTML span (but not inside code blocks or HTML tags)
   result = result.replace(/(^|[^&\w])#([^\s#{}()<>]+)/g, (_match, prefix: string, tagName: string) => {
@@ -727,11 +727,11 @@ export default function BlockEditor({
                   if (e.key === "Escape") setEditingPageTitle(false);
                 }}
                 autoFocus
-                className="w-full text-xl font-bold text-gray-800 bg-orange-50 border border-orange-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-orange-400"
+                className="w-full text-xl font-bold text-gray-800 bg-theme-50 border border-theme-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-theme-400"
               />
             ) : (
               <h2
-                className="text-xl font-bold text-gray-800 cursor-pointer hover:text-orange-600 transition px-1"
+                className="text-xl font-bold text-gray-800 cursor-pointer hover:text-theme-600 transition px-1"
                 onClick={() => {
                   setPageTitleDraft(selectedPageName.split("/").pop() || selectedPageName);
                   setEditingPageTitle(true);
@@ -754,7 +754,7 @@ export default function BlockEditor({
                     <li key={cp.id}>
                       <button
                         onClick={() => onPageClick(cp.id, cp.name)}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-700 transition text-left"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-theme-50 hover:text-theme-700 transition text-left"
                       >
                         <svg className="h-4 w-4 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

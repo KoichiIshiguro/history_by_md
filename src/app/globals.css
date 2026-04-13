@@ -3,18 +3,38 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
-  --sidebar-bg: #fff7ed;
-  --border: #fed7aa;
   --tag-bg: #e8f0fe;
   --tag-text: #1a73e8;
-  --accent: #f97316;
-  --block-hover: #fff7ed;
-  --date-header: #ea580c;
+
+  /* Theme color palette (default: orange) */
+  --theme-50: #fff7ed;
+  --theme-100: #ffedd5;
+  --theme-200: #fed7aa;
+  --theme-300: #fdba74;
+  --theme-400: #fb923c;
+  --theme-500: #f97316;
+  --theme-600: #ea580c;
+  --theme-700: #c2410c;
+
+  /* Semantic aliases using theme vars */
+  --sidebar-bg: var(--theme-50);
+  --border: var(--theme-200);
+  --accent: var(--theme-500);
+  --block-hover: var(--theme-50);
+  --date-header: var(--theme-600);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-theme-50: var(--theme-50);
+  --color-theme-100: var(--theme-100);
+  --color-theme-200: var(--theme-200);
+  --color-theme-300: var(--theme-300);
+  --color-theme-400: var(--theme-400);
+  --color-theme-500: var(--theme-500);
+  --color-theme-600: var(--theme-600);
+  --color-theme-700: var(--theme-700);
 }
 
 body {
@@ -44,45 +64,33 @@ body {
 }
 
 .tag-inline {
-  background: var(--tag-bg);
-  color: var(--tag-text);
-  padding: 1px 6px;
-  border-radius: 3px;
+  color: #6b7280;
   cursor: pointer;
-  font-size: 0.9em;
-  font-weight: 500;
+  font-weight: 700;
 }
 
 .tag-inline:hover {
-  background: #d2e3fc;
+  text-decoration: underline;
 }
 
 .page-link {
-  background: #e8f5e9;
-  color: #2e7d32;
-  padding: 1px 6px;
-  border-radius: 3px;
+  color: var(--theme-600);
   cursor: pointer;
-  font-size: 0.9em;
   font-weight: 500;
 }
 
 .page-link:hover {
-  background: #c8e6c9;
+  text-decoration: underline;
 }
 
 .date-link {
-  background: #fff3e0;
-  color: #e65100;
-  padding: 1px 6px;
-  border-radius: 3px;
+  color: var(--theme-600);
   cursor: pointer;
-  font-size: 0.9em;
   font-weight: 500;
 }
 
 .date-link:hover {
-  background: #ffe0b2;
+  text-decoration: underline;
 }
 
 /* GFM Markdown styles */
@@ -209,24 +217,14 @@ body {
 
 /* Action flags */
 .action-flag {
-  display: inline-block;
-  padding: 0px 6px;
-  border-radius: 3px;
-  font-size: 0.75em;
+  display: inline;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  vertical-align: middle;
 }
 .action-open {
-  background: #fef3c7;
-  color: #d97706;
-  border: 1px solid #fbbf24;
+  color: #dc2626;
 }
 .action-done {
-  background: #d1fae5;
-  color: #059669;
-  border: 1px solid #6ee7b7;
+  color: #16a34a;
 }
 
 /* Modal animation */

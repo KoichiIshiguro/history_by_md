@@ -68,6 +68,24 @@ function formatMonth(ym: string): string {
   return `${y}年${parseInt(m)}月`;
 }
 
+const THEME_PRESETS: Record<string, Record<string, string>> = {
+  orange: { '50': '#fff7ed', '100': '#ffedd5', '200': '#fed7aa', '300': '#fdba74', '400': '#fb923c', '500': '#f97316', '600': '#ea580c', '700': '#c2410c' },
+  blue: { '50': '#eff6ff', '100': '#dbeafe', '200': '#bfdbfe', '300': '#93c5fd', '400': '#60a5fa', '500': '#3b82f6', '600': '#2563eb', '700': '#1d4ed8' },
+  purple: { '50': '#faf5ff', '100': '#f3e8ff', '200': '#e9d5ff', '300': '#d8b4fe', '400': '#c084fc', '500': '#a855f7', '600': '#9333ea', '700': '#7e22ce' },
+  green: { '50': '#f0fdf4', '100': '#dcfce7', '200': '#bbf7d0', '300': '#86efac', '400': '#4ade80', '500': '#22c55e', '600': '#16a34a', '700': '#15803d' },
+  pink: { '50': '#fdf2f8', '100': '#fce7f3', '200': '#fbcfe8', '300': '#f9a8d4', '400': '#f472b6', '500': '#ec4899', '600': '#db2777', '700': '#be185d' },
+};
+
+function applyTheme(themeName: string) {
+  const preset = THEME_PRESETS[themeName];
+  if (!preset) return;
+  const root = document.documentElement;
+  for (const [shade, value] of Object.entries(preset)) {
+    root.style.setProperty(`--theme-${shade}`, value);
+  }
+  try { localStorage.setItem('theme-color', themeName); } catch {}
+}
+
 export default function Sidebar({
   user, isAdmin, pages, tags, dates, selectedDate, selectedPageId, selectedTagId,
   viewMode, onSelectDate, onSelectPage, onSelectTag, onSelectAdmin, onSelectActions,
@@ -83,6 +101,14 @@ export default function Sidebar({
   });
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [currentTheme, setCurrentTheme] = useState('orange');
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('theme-color');
+      if (saved && THEME_PRESETS[saved]) { setCurrentTheme(saved); }
+    } catch {}
+  }, []);
 
   const pageTree = buildPageTree(pages);
   const filteredTags = tagSearch
@@ -146,12 +172,12 @@ export default function Sidebar({
   return (
     <div className="flex h-full flex-col">
       {/* User */}
-      <div className="relative border-b border-orange-200 p-3">
-        <button onClick={() => setShowUserMenu(!showUserMenu)} className="flex w-full items-center gap-2 rounded-lg p-1 hover:bg-orange-50 transition">
+      <div className="relative border-b border-theme-200 p-3">
+        <button onClick={() => setShowUserMenu(!showUserMenu)} className="flex w-full items-center gap-2 rounded-lg p-1 hover:bg-theme-50 transition">
           {user.image ? (
             <img src={user.image} alt="" className="h-8 w-8 rounded-full" />
           ) : (
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-100 text-sm font-bold text-orange-600">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-theme-100 text-sm font-bold text-theme-600">
               {user.name?.[0] || "U"}
             </div>
           )}
@@ -175,8 +201,22 @@ export default function Sidebar({
                 ユーザー管理
               </button>
             )}
+            <div className="px-3 py-2 border-t border-gray-100">
+              <p className="text-xs font-medium text-gray-500 mb-1.5">テーマ色</p>
+              <div className="flex gap-1.5">
+                {Object.entries(THEME_PRESETS).map(([name, colors]) => (
+                  <button
+                    key={name}
+                    onClick={() => { applyTheme(name); setCurrentTheme(name); }}
+                    className={`h-6 w-6 rounded-full border-2 transition ${currentTheme === name ? 'border-gray-800 scale-110' : 'border-transparent hover:scale-110'}`}
+                    style={{ backgroundColor: colors['500'] }}
+                    title={name}
+                  />
+                ))}
+              </div>
+            </div>
             <button onClick={() => { onSignOut(); setShowUserMenu(false); }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 border-t border-gray-100">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
@@ -193,8 +233,8 @@ export default function Sidebar({
             onClick={() => click(onSelectActions)}
             className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
               viewMode === "actions"
-                ? "bg-orange-100 text-orange-700 border border-orange-300"
-                : "text-gray-600 hover:bg-orange-50 border border-transparent"
+                ? "bg-theme-100 text-theme-700 border border-theme-300"
+                : "text-gray-600 hover:bg-theme-50 border border-transparent"
             }`}
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -257,7 +297,7 @@ export default function Sidebar({
               <button
                 onClick={() => click(() => onSelectDate(today))}
                 className={`w-full rounded px-3 py-1.5 text-left text-sm font-medium ${
-                  viewMode === "date" && selectedDate === today ? "bg-orange-100 text-orange-700" : "text-orange-600 hover:bg-orange-50"
+                  viewMode === "date" && selectedDate === today ? "bg-theme-100 text-theme-700" : "text-theme-600 hover:bg-theme-50"
                 }`}
               >今日</button>
               {[...datesByMonth.entries()].map(([month, monthDates]) => (
@@ -275,7 +315,7 @@ export default function Sidebar({
                   {expandedMonths.has(month) && monthDates.map((date) => (
                     <button key={date} onClick={() => click(() => onSelectDate(date))}
                       className={`w-full rounded py-1 pl-7 pr-3 text-left text-sm ${
-                        viewMode === "date" && selectedDate === date ? "bg-orange-100 text-orange-700" : "text-gray-600 hover:bg-gray-100"
+                        viewMode === "date" && selectedDate === date ? "bg-theme-100 text-theme-700" : "text-gray-600 hover:bg-gray-100"
                       }`}
                     >{date.slice(5)}</button>
                   ))}
@@ -299,13 +339,13 @@ export default function Sidebar({
             <>
               <div className="mb-1 px-1">
                 <input type="text" value={tagSearch} onChange={(e) => setTagSearch(e.target.value)}
-                  placeholder="タグを検索..." className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs outline-none focus:border-orange-300" />
+                  placeholder="タグを検索..." className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs outline-none focus:border-theme-300" />
               </div>
               {filteredTags.length === 0 && <p className="px-3 py-1 text-xs text-gray-400">タグなし</p>}
               {filteredTags.map((tag) => (
                 <button key={tag.id} onClick={() => click(() => onSelectTag(tag.id, tag.name))}
                   className={`w-full rounded px-3 py-1 text-left text-sm flex items-center justify-between ${
-                    viewMode === "tag" && selectedTagId === tag.id ? "bg-orange-100 text-orange-700" : "text-gray-600 hover:bg-gray-100"
+                    viewMode === "tag" && selectedTagId === tag.id ? "bg-theme-100 text-theme-700" : "text-gray-600 hover:bg-gray-100"
                   }`}>
                   <span>#{tag.name}</span>
                   <span className="text-xs text-gray-400">{tag.block_count}</span>
@@ -360,7 +400,7 @@ function InlineInput({ depth, placeholder, onSubmit, onCancel }: {
         }}
         onBlur={() => { value.trim() ? onSubmit(value) : onCancel(); }}
         placeholder={placeholder}
-        className="flex-1 rounded border border-orange-300 bg-white px-2 py-0.5 text-sm outline-none focus:ring-1 focus:ring-orange-400" />
+        className="flex-1 rounded border border-theme-300 bg-white px-2 py-0.5 text-sm outline-none focus:ring-1 focus:ring-theme-400" />
     </div>
   );
 }
@@ -380,7 +420,7 @@ function PageNode({ page, depth, selectedPageId, viewMode, expandedPages, adding
 
   return (
     <div>
-      <div className={`group/pg flex items-center rounded py-1 pr-1 text-sm ${isSelected ? "bg-orange-100 text-orange-700" : "text-gray-600 hover:bg-gray-100"}`}
+      <div className={`group/pg flex items-center rounded py-1 pr-1 text-sm ${isSelected ? "bg-theme-100 text-theme-700" : "text-gray-600 hover:bg-gray-100"}`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}>
         <button onClick={() => hasChildren && onToggleExpand(page.id)}
           className={`mr-1 flex h-4 w-4 flex-shrink-0 items-center justify-center text-xs ${hasChildren ? "text-gray-400 hover:text-gray-600" : "text-transparent"}`}>

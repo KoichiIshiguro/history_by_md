@@ -188,7 +188,7 @@ export default function MainApp({ user, isAdmin }: Props) {
                 sidebarOpen ? "translate-x-0" : "-translate-x-full"
               }`
             : `${sidebarOpen ? "w-64" : "w-0"} transition-all duration-200 overflow-hidden`
-        } border-r border-orange-200 bg-[#fef6ee] flex-shrink-0`}
+        } border-r border-theme-200 bg-theme-50 flex-shrink-0`}
       >
         <Sidebar
           user={user}
@@ -214,11 +214,11 @@ export default function MainApp({ user, isAdmin }: Props) {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="flex items-center justify-between border-b border-orange-100 bg-white px-4 py-2">
+        <header className="flex items-center justify-between border-b border-theme-100 bg-white px-4 py-2">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="rounded p-1.5 text-gray-500 hover:bg-orange-50"
+              className="rounded p-1.5 text-gray-500 hover:bg-theme-50"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -227,24 +227,24 @@ export default function MainApp({ user, isAdmin }: Props) {
             <h1 className="text-lg font-semibold text-gray-800 truncate">
               {viewMode === "date" && (
                 <>
-                  <span className="text-orange-400 text-sm mr-2">日付</span>
+                  <span className="text-theme-400 text-sm mr-2">日付</span>
                   {selectedDate}
                 </>
               )}
               {viewMode === "page" && (
                 <>
-                  <span className="text-orange-400 text-sm mr-2">ページ</span>
+                  <span className="text-theme-400 text-sm mr-2">ページ</span>
                   {selectedPageName}
                 </>
               )}
               {viewMode === "tag" && (
                 <>
-                  <span className="text-orange-400 text-sm mr-2">タグ</span>
+                  <span className="text-theme-400 text-sm mr-2">タグ</span>
                   <span className="tag-inline">{selectedTagName}</span>
                 </>
               )}
               {viewMode === "actions" && (
-                <span className="text-orange-600">全アクション</span>
+                <span className="text-theme-600">全アクション</span>
               )}
               {viewMode === "admin" && "ユーザー管理"}
             </h1>
@@ -254,7 +254,7 @@ export default function MainApp({ user, isAdmin }: Props) {
             {isMobile && hasRightSidebar && (
               <button
                 onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
-                className={`rounded p-1.5 transition ${rightSidebarOpen ? "bg-orange-100 text-orange-600" : "text-gray-500 hover:bg-orange-50"}`}
+                className={`rounded p-1.5 transition ${rightSidebarOpen ? "bg-theme-100 text-theme-600" : "text-gray-500 hover:bg-theme-50"}`}
                 title="アクション"
               >
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -270,13 +270,13 @@ export default function MainApp({ user, isAdmin }: Props) {
                     d.setDate(d.getDate() - 1);
                     setSelectedDate(d.toISOString().split("T")[0]);
                   }}
-                  className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-orange-50"
+                  className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-theme-50"
                 >
                   &larr;
                 </button>
                 <button
                   onClick={() => setSelectedDate(new Date().toISOString().split("T")[0])}
-                  className="rounded px-2 py-1 text-sm text-orange-600 hover:bg-orange-50 font-medium"
+                  className="rounded px-2 py-1 text-sm text-theme-600 hover:bg-theme-50 font-medium"
                 >
                   今日
                 </button>
@@ -286,7 +286,7 @@ export default function MainApp({ user, isAdmin }: Props) {
                     d.setDate(d.getDate() + 1);
                     setSelectedDate(d.toISOString().split("T")[0]);
                   }}
-                  className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-orange-50"
+                  className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-theme-50"
                 >
                   &rarr;
                 </button>
@@ -326,8 +326,8 @@ export default function MainApp({ user, isAdmin }: Props) {
           </div>
           {/* Right sidebar - desktop */}
           {hasRightSidebar && !isMobile && (
-            <div className="w-72 border-l border-orange-100 bg-[#fef6ee] overflow-auto p-3 flex-shrink-0">
-              <h3 className="text-sm font-semibold text-orange-600 mb-2">アクション</h3>
+            <div className="w-72 border-l border-theme-100 bg-theme-50 overflow-auto p-3 flex-shrink-0">
+              <h3 className="text-sm font-semibold text-theme-600 mb-2">アクション</h3>
               <ActionList
                 pageId={selectedPageId!}
                 allPages={pages}
@@ -341,13 +341,13 @@ export default function MainApp({ user, isAdmin }: Props) {
           {/* Right sidebar - mobile (slide in from right) */}
           {isMobile && hasRightSidebar && (
             <div
-              className={`fixed inset-y-0 right-0 z-30 w-72 transform transition-transform duration-200 border-l border-orange-200 bg-[#fef6ee] overflow-auto p-3 shadow-xl ${
+              className={`fixed inset-y-0 right-0 z-30 w-72 transform transition-transform duration-200 border-l border-theme-200 bg-theme-50 overflow-auto p-3 shadow-xl ${
                 rightSidebarOpen ? "translate-x-0" : "translate-x-full"
               }`}
             >
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-orange-600">アクション</h3>
-                <button onClick={() => setRightSidebarOpen(false)} className="rounded p-1 text-gray-400 hover:bg-orange-100">
+                <h3 className="text-sm font-semibold text-theme-600">アクション</h3>
+                <button onClick={() => setRightSidebarOpen(false)} className="rounded p-1 text-gray-400 hover:bg-theme-100">
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
