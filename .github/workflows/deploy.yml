@@ -42,6 +42,7 @@ jobs:
 
             # Use npm install (not ci) to avoid full reinstall on low-memory server
             npm install --prefer-offline 2>&1 | tail -5
+            npm rebuild better-sqlite3
 
             # Build with limited memory
             NODE_OPTIONS="--max-old-space-size=512" npx next build
