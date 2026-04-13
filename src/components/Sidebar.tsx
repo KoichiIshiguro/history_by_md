@@ -65,6 +65,16 @@ export default function Sidebar({
 
   const tagTree = buildTagTree(tags);
 
+  const deleteTag = async (tagId: string, tagName: string) => {
+    if (!confirm(`タグ「${tagName}」を削除しますか？`)) return;
+    const res = await fetch("/api/tags", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: tagId }),
+    });
+    if (res.ok) onTagsChange();
+  };
+
   const toggleExpand = (tagId: string) => {
     setExpandedTags((prev) => {
       const next = new Set(prev);
@@ -226,6 +236,7 @@ export default function Sidebar({
               expandedTags={expandedTags}
               onToggleExpand={toggleExpand}
               onSelectTag={(id, name) => handleItemClick(() => onSelectTag(id, name))}
+              onDeleteTag={deleteTag}
             />
           ))}
         </div>
@@ -252,6 +263,7 @@ function TagNode({
   expandedTags,
   onToggleExpand,
   onSelectTag,
+  onDeleteTag,
 }: {
   tag: { id: string; name: string; block_count: number; children: any[] };
   depth: number;
@@ -260,6 +272,7 @@ function TagNode({
   expandedTags: Set<string>;
   onToggleExpand: (id: string) => void;
   onSelectTag: (id: string, name: string) => void;
+  onDeleteTag: (id: string, name: string) => void;
 }) {
   const hasChildren = tag.children.length > 0;
   const isExpanded = expandedTags.has(tag.id);
@@ -268,7 +281,7 @@ function TagNode({
   return (
     <div>
       <div
-        className={`flex items-center rounded py-1 text-sm ${
+        className={`group/tag flex items-center rounded py-1 text-sm ${
           isSelected ? "bg-blue-100 text-blue-700" : "text-gray-600 hover:bg-gray-100"
         }`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
@@ -290,6 +303,15 @@ function TagNode({
           <span className="tag-inline text-xs">{tag.name}</span>
           <span className="ml-1 text-xs text-gray-400">{tag.block_count}</span>
         </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeleteTag(tag.id, tag.name);
+          }}
+          className="mr-1 hidden group-hover/tag:block flex-shrink-0 text-xs text-gray-400 hover:text-red-500"
+        >
+          ×
+        </button>
       </div>
       {hasChildren && isExpanded && (
         <div>
@@ -303,6 +325,7 @@ function TagNode({
               expandedTags={expandedTags}
               onToggleExpand={onToggleExpand}
               onSelectTag={onSelectTag}
+              onDeleteTag={onDeleteTag}
             />
           ))}
         </div>

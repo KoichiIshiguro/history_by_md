@@ -57,8 +57,9 @@ export async function POST(request: NextRequest) {
   const user = session.user as any;
   const db = getDb();
   const body = await request.json();
-  const { date, blocks } = body as {
-    date: string;
+  const { date, tagId, blocks } = body as {
+    date?: string;
+    tagId?: string;
     blocks: Array<{
       id?: string;
       content: string;
@@ -68,20 +69,37 @@ export async function POST(request: NextRequest) {
     }>;
   };
 
-  // Compute tags for each block based on hierarchy
+  if (tagId) {
+    // Tag page save: blocks belong directly to a tag page
+    const saveTransaction = db.transaction(() => {
+      db.prepare("DELETE FROM blocks WHERE user_id = ? AND tag_id = ?").run(user.id, tagId);
+
+      const insertBlock = db.prepare(
+        `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, tag_id)
+         VALUES (?, ?, '', ?, ?, ?, ?)`
+      );
+
+      for (const block of blocks) {
+        const blockId = block.id || crypto.randomUUID();
+        insertBlock.run(blockId, user.id, block.content, block.indent_level, block.sort_order, tagId);
+      }
+    });
+    saveTransaction();
+    return Response.json({ ok: true });
+  }
+
+  // Date page save: existing behavior
   const blockTags = computeBlockTags(blocks);
 
   const saveTransaction = db.transaction(() => {
-    // Delete existing blocks for this date
     const existingBlocks = db
-      .prepare("SELECT id FROM blocks WHERE user_id = ? AND date = ?")
+      .prepare("SELECT id FROM blocks WHERE user_id = ? AND date = ? AND tag_id IS NULL")
       .all(user.id, date) as { id: string }[];
     for (const block of existingBlocks) {
       db.prepare("DELETE FROM block_tags WHERE block_id = ?").run(block.id);
     }
-    db.prepare("DELETE FROM blocks WHERE user_id = ? AND date = ?").run(user.id, date);
+    db.prepare("DELETE FROM blocks WHERE user_id = ? AND date = ? AND tag_id IS NULL").run(user.id, date);
 
-    // Insert new blocks
     const insertBlock = db.prepare(
       `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, parent_id)
        VALUES (?, ?, ?, ?, ?, ?, ?)`

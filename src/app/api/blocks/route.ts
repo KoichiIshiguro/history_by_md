@@ -14,19 +14,30 @@ export async function GET(request: NextRequest) {
   const tagId = request.nextUrl.searchParams.get("tagId");
 
   if (tagId) {
-    // Tag view: get all blocks associated with this tag (including children), grouped by date
-    const blocks = db
+    // Page blocks: blocks directly on this tag page (no date association)
+    const pageBlocks = db
       .prepare(
-        `SELECT b.*, GROUP_CONCAT(DISTINCT bt2.tag_id) as tag_ids
+        `SELECT b.*, '' as tag_ids, 1 as is_page_block
+         FROM blocks b
+         WHERE b.tag_id = ? AND b.user_id = ?
+         ORDER BY b.sort_order ASC`
+      )
+      .all(tagId, user.id);
+
+    // Referenced blocks: blocks from dates that have this tag
+    const refBlocks = db
+      .prepare(
+        `SELECT b.*, GROUP_CONCAT(DISTINCT bt2.tag_id) as tag_ids, 0 as is_page_block
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
          LEFT JOIN block_tags bt2 ON bt2.block_id = b.id
-         WHERE bt.tag_id = ? AND b.user_id = ?
+         WHERE bt.tag_id = ? AND b.user_id = ? AND b.tag_id IS NULL
          GROUP BY b.id
          ORDER BY b.date DESC, b.sort_order ASC`
       )
       .all(tagId, user.id);
-    return Response.json(blocks);
+
+    return Response.json({ pageBlocks, refBlocks });
   }
 
   if (date) {
@@ -60,13 +71,13 @@ export async function POST(request: NextRequest) {
   const user = session.user as any;
   const db = getDb();
   const body = await request.json();
-  const { date, content, indent_level, sort_order, parent_id, tags } = body;
+  const { date, content, indent_level, sort_order, parent_id, tags, tag_id } = body;
 
   const id = crypto.randomUUID();
   db.prepare(
-    `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, parent_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, user.id, date, content || "", indent_level || 0, sort_order || 0, parent_id || null);
+    `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, parent_id, tag_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, user.id, date || "", content || "", indent_level || 0, sort_order || 0, parent_id || null, tag_id || null);
 
   // Handle tags
   if (tags && tags.length > 0) {
@@ -154,8 +165,8 @@ export async function PUT(request: NextRequest) {
   const body = await request.json();
   const { id, content, indent_level, sort_order } = body;
 
-  // Get the block's date for recomputing tags
-  const block = db.prepare("SELECT date FROM blocks WHERE id = ? AND user_id = ?").get(id, user.id) as { date: string } | undefined;
+  // Get the block's date and tag_id for recomputing tags
+  const block = db.prepare("SELECT date, tag_id FROM blocks WHERE id = ? AND user_id = ?").get(id, user.id) as { date: string; tag_id: string | null } | undefined;
   if (!block) {
     return Response.json({ error: "Block not found" }, { status: 404 });
   }
@@ -166,8 +177,10 @@ export async function PUT(request: NextRequest) {
        WHERE id = ? AND user_id = ?`
     ).run(content, indent_level || 0, sort_order || 0, id, user.id);
 
-    // Recompute all tags for this date (since hierarchy may have changed)
-    recomputeTagsForDate(db, user.id, block.date);
+    // Only recompute tags for date blocks (page blocks don't have tag hierarchy)
+    if (!block.tag_id && block.date) {
+      recomputeTagsForDate(db, user.id, block.date);
+    }
   });
 
   updateTransaction();

@@ -82,4 +82,12 @@ function initDb(db: Database.Database) {
   if (!colNames.includes("sort_order")) {
     db.exec("ALTER TABLE tags ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
   }
+
+  // Migration: add tag_id to blocks for page blocks
+  const blockCols = db.prepare("PRAGMA table_info(blocks)").all() as { name: string }[];
+  const blockColNames = blockCols.map((c) => c.name);
+  if (!blockColNames.includes("tag_id")) {
+    db.exec("ALTER TABLE blocks ADD COLUMN tag_id TEXT REFERENCES tags(id) ON DELETE CASCADE");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_tag ON blocks(tag_id)");
+  }
 }

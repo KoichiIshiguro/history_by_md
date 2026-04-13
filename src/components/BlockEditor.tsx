@@ -15,6 +15,8 @@ interface Block {
   sort_order: number;
   date: string;
   tag_ids?: string;
+  tag_id?: string | null;
+  is_page_block?: number;
 }
 
 interface TagInfo {
@@ -154,14 +156,18 @@ export default function BlockEditor({
   onDataChange,
 }: Props) {
   const [blocks, setBlocks] = useState<Block[]>([]);
+  const [refBlocks, setRefBlocks] = useState<Block[]>([]);
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [tagSuggestions, setTagSuggestions] = useState<TagInfo[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
+  const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
+  const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const textareaRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const fetchBlocks = useCallback(async () => {
     setLoading(true);
@@ -172,7 +178,16 @@ export default function BlockEditor({
       url += `?date=${selectedDate}`;
     }
     const res = await fetch(url);
-    if (res.ok) setBlocks(await res.json());
+    if (res.ok) {
+      const data = await res.json();
+      if (viewMode === "tag" && data.pageBlocks !== undefined) {
+        setBlocks(data.pageBlocks);
+        setRefBlocks(data.refBlocks || []);
+      } else {
+        setBlocks(data);
+        setRefBlocks([]);
+      }
+    }
     setLoading(false);
   }, [viewMode, selectedDate, selectedTagId]);
 
@@ -182,19 +197,21 @@ export default function BlockEditor({
 
   const saveBlocks = useCallback(
     async (updatedBlocks: Block[]) => {
-      if (viewMode === "tag") {
-        for (const block of updatedBlocks) {
-          await fetch("/api/blocks", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              id: block.id,
-              content: block.content,
-              indent_level: block.indent_level,
-              sort_order: block.sort_order,
-            }),
-          });
-        }
+      if (viewMode === "tag" && selectedTagId) {
+        // Save page blocks via bulk save
+        await fetch("/api/blocks/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tagId: selectedTagId,
+            blocks: updatedBlocks.map((b, i) => ({
+              id: b.id,
+              content: b.content,
+              indent_level: b.indent_level,
+              sort_order: i,
+            })),
+          }),
+        });
       } else {
         await fetch("/api/blocks/save", {
           method: "POST",
@@ -212,7 +229,7 @@ export default function BlockEditor({
       }
       onDataChange();
     },
-    [viewMode, selectedDate, onDataChange]
+    [viewMode, selectedDate, selectedTagId, onDataChange]
   );
 
   const debouncedSave = useCallback(
@@ -221,6 +238,121 @@ export default function BlockEditor({
       saveTimeoutRef.current = setTimeout(() => saveBlocks(updatedBlocks), 800);
     },
     [saveBlocks]
+  );
+
+  const clearSelection = useCallback(() => {
+    setSelectedBlockIds(new Set());
+    setSelectionAnchor(null);
+  }, []);
+
+  const selectRange = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      const start = Math.min(fromIndex, toIndex);
+      const end = Math.max(fromIndex, toIndex);
+      const ids = new Set<string>();
+      for (let i = start; i <= end; i++) {
+        if (blocks[i]) ids.add(blocks[i].id);
+      }
+      setSelectedBlockIds(ids);
+    },
+    [blocks]
+  );
+
+  const deleteSelectedBlocks = useCallback(() => {
+    if (selectedBlockIds.size === 0) return;
+    const remaining = blocks.filter((b) => !selectedBlockIds.has(b.id));
+    if (remaining.length === 0) {
+      const newBlock: Block = {
+        id: crypto.randomUUID(),
+        content: "",
+        indent_level: 0,
+        sort_order: 0,
+        date: selectedDate,
+      };
+      const updated = [newBlock];
+      setBlocks(updated);
+      clearSelection();
+      setEditingBlockId(newBlock.id);
+      setEditContent("");
+      setTimeout(() => {
+        const el = textareaRefs.current.get(newBlock.id);
+        if (el) el.focus();
+      }, 0);
+      debouncedSave(updated);
+      return;
+    }
+    const reordered = remaining.map((b, i) => ({ ...b, sort_order: i }));
+    setBlocks(reordered);
+    clearSelection();
+    debouncedSave(reordered);
+  }, [blocks, selectedBlockIds, selectedDate, clearSelection, debouncedSave]);
+
+  const copySelectedBlocks = useCallback(
+    async (cut: boolean) => {
+      if (selectedBlockIds.size === 0) return;
+      const selectedTexts = blocks
+        .filter((b) => selectedBlockIds.has(b.id))
+        .map((b) => "  ".repeat(b.indent_level) + b.content);
+      await navigator.clipboard.writeText(selectedTexts.join("\n"));
+      if (cut) deleteSelectedBlocks();
+    },
+    [blocks, selectedBlockIds, deleteSelectedBlocks]
+  );
+
+  // Handle keyboard shortcuts on the container (for when no block is being edited)
+  const handleContainerKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (editingBlockId) return; // Let block handle its own keys
+      if (selectedBlockIds.size === 0) return;
+
+      const metaKey = e.metaKey || e.ctrlKey;
+
+      if (e.key === "Backspace" || e.key === "Delete") {
+        e.preventDefault();
+        deleteSelectedBlocks();
+        return;
+      }
+      if (metaKey && e.key === "c") {
+        e.preventDefault();
+        copySelectedBlocks(false);
+        return;
+      }
+      if (metaKey && e.key === "x") {
+        e.preventDefault();
+        copySelectedBlocks(true);
+        return;
+      }
+      if (metaKey && e.key === "a") {
+        e.preventDefault();
+        setSelectedBlockIds(new Set(blocks.map((b) => b.id)));
+        setSelectionAnchor(0);
+        return;
+      }
+      if (e.key === "Escape") {
+        clearSelection();
+        return;
+      }
+    },
+    [editingBlockId, selectedBlockIds, blocks, deleteSelectedBlocks, copySelectedBlocks, clearSelection]
+  );
+
+  const handleBlockMouseDown = useCallback(
+    (e: React.MouseEvent, blockIndex: number) => {
+      // Only handle selection on the non-editing display view
+      if (editingBlockId === blocks[blockIndex]?.id) return;
+
+      if (e.shiftKey && selectionAnchor !== null) {
+        e.preventDefault();
+        selectRange(selectionAnchor, blockIndex);
+        return;
+      }
+      // Normal click clears selection
+      if (!e.shiftKey) {
+        clearSelection();
+        setSelectionAnchor(blockIndex);
+      }
+    },
+    [editingBlockId, blocks, selectionAnchor, selectRange, clearSelection]
   );
 
   const setTextareaRef = (id: string, el: HTMLTextAreaElement | null) => {
@@ -244,6 +376,7 @@ export default function BlockEditor({
   };
 
   const startEditing = (block: Block) => {
+    if (selectedBlockIds.size > 0) return; // Don't enter edit mode during selection
     setEditingBlockId(block.id);
     setEditContent(block.content);
     setShowSuggestions(false);
@@ -324,6 +457,16 @@ export default function BlockEditor({
 
     const textarea = e.currentTarget;
     const cursorPos = textarea.selectionStart;
+    const metaKey = e.metaKey || e.ctrlKey;
+
+    // Ctrl/Cmd+A: select all blocks
+    if (metaKey && e.key === "a") {
+      e.preventDefault();
+      finishEditing();
+      setSelectedBlockIds(new Set(blocks.map((b) => b.id)));
+      setSelectionAnchor(0);
+      return;
+    }
 
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -444,13 +587,14 @@ export default function BlockEditor({
     }
   };
 
-  const addNewBlock = (date?: string) => {
+  const addNewBlock = () => {
     const newBlock: Block = {
       id: crypto.randomUUID(),
       content: "",
       indent_level: 0,
       sort_order: blocks.length,
-      date: date || selectedDate,
+      date: viewMode === "tag" ? "" : selectedDate,
+      tag_id: viewMode === "tag" ? selectedTagId : null,
     };
     const updated = [...blocks, newBlock];
     setBlocks(updated);
@@ -458,36 +602,10 @@ export default function BlockEditor({
     debouncedSave(updated);
   };
 
-  // Add block in tag view for a specific date
-  const addBlockInTagView = async () => {
-    const today = new Date().toISOString().split("T")[0];
-    const newBlock: Block = {
-      id: crypto.randomUUID(),
-      content: `#${selectedTagName} `,
-      indent_level: 0,
-      sort_order: 9999,
-      date: today,
-    };
-    // Save to the date directly
-    await fetch("/api/blocks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        date: today,
-        content: newBlock.content,
-        indent_level: 0,
-        sort_order: 9999,
-        tags: [selectedTagName],
-      }),
-    });
-    onDataChange();
-    fetchBlocks();
-  };
-
-  // Group blocks by date in tag view
-  const groupedByDate =
+  // Group ref blocks by date in tag view
+  const groupedRefByDate =
     viewMode === "tag"
-      ? blocks.reduce(
+      ? refBlocks.reduce(
           (acc, block) => {
             if (!acc[block.date]) acc[block.date] = [];
             acc[block.date].push(block);
@@ -506,58 +624,92 @@ export default function BlockEditor({
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
-      {viewMode === "tag" && groupedByDate ? (
+    <div
+      ref={containerRef}
+      className="mx-auto max-w-3xl outline-none"
+      tabIndex={-1}
+      onKeyDown={handleContainerKeyDown}
+    >
+      {viewMode === "tag" ? (
         <>
-          {Object.entries(groupedByDate)
-            .sort(([a], [b]) => b.localeCompare(a))
-            .map(([date, dateBlocks]) => (
-              <div key={date} className="mb-6">
-                <h2 className="mb-2 flex items-center gap-2 text-sm font-medium">
-                  <span
-                    className="date-link cursor-pointer"
-                    onClick={() => onDateClick(date)}
-                  >
-                    {date}
-                  </span>
-                </h2>
-                <div className="rounded-lg border border-gray-200 bg-white p-3">
-                  {dateBlocks.map((block) => {
-                    const blockIndex = blocks.indexOf(block);
-                    return (
-                      <BlockLine
-                        key={block.id}
-                        block={block}
-                        blockIndex={blockIndex}
-                        isEditing={editingBlockId === block.id}
-                        editContent={editContent}
-                        allTags={allTags}
-                        showSuggestions={
-                          showSuggestions && editingBlockId === block.id
-                        }
-                        tagSuggestions={tagSuggestions}
-                        selectedSuggestion={selectedSuggestion}
-                        setTextareaRef={setTextareaRef}
-                        onStartEditing={startEditing}
-                        onEditContentChange={handleContentChange}
-                        onFinishEditing={finishEditing}
-                        onKeyDown={handleKeyDown}
-                        onTagClick={onTagClick}
-                        onDateClick={onDateClick}
-                        onApplySuggestion={applySuggestion}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
+          {/* Page content: directly editable */}
+          <div className="rounded-lg border border-gray-200 bg-white p-3">
+            {blocks.map((block, blockIndex) => (
+              <BlockLine
+                key={block.id}
+                block={block}
+                blockIndex={blockIndex}
+                isEditing={editingBlockId === block.id}
+                isSelected={selectedBlockIds.has(block.id)}
+                editContent={editContent}
+                allTags={allTags}
+                showSuggestions={
+                  showSuggestions && editingBlockId === block.id
+                }
+                tagSuggestions={tagSuggestions}
+                selectedSuggestion={selectedSuggestion}
+                setTextareaRef={setTextareaRef}
+                onStartEditing={startEditing}
+                onEditContentChange={handleContentChange}
+                onFinishEditing={finishEditing}
+                onKeyDown={handleKeyDown}
+                onTagClick={onTagClick}
+                onDateClick={onDateClick}
+                onApplySuggestion={applySuggestion}
+                onBlockMouseDown={handleBlockMouseDown}
+              />
             ))}
-          {/* Tag view: add new block button */}
+            {blocks.length === 0 && (
+              <div
+                className="py-4 cursor-text text-sm text-gray-300 min-h-[2em]"
+                onClick={() => addNewBlock()}
+              >
+                &nbsp;
+              </div>
+            )}
+          </div>
           <button
-            onClick={addBlockInTagView}
+            onClick={() => addNewBlock()}
             className="mt-2 rounded px-3 py-1.5 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
-            + 今日の日付で新しいブロック
+            + 新しいブロック
           </button>
+
+          {/* Referenced blocks from dates */}
+          {groupedRefByDate && Object.keys(groupedRefByDate).length > 0 && (
+            <div className="mt-6">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                日付からの参照
+              </h3>
+              {Object.entries(groupedRefByDate)
+                .sort(([a], [b]) => b.localeCompare(a))
+                .map(([date, dateBlocks]) => (
+                  <div key={date} className="mb-4">
+                    <h2 className="mb-1 flex items-center gap-2 text-sm font-medium">
+                      <span
+                        className="date-link cursor-pointer"
+                        onClick={() => onDateClick(date)}
+                      >
+                        {date}
+                      </span>
+                    </h2>
+                    <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                      {dateBlocks.map((block) => (
+                        <div
+                          key={block.id}
+                          className="py-0.5 text-sm text-gray-600"
+                          style={{ paddingLeft: `${block.indent_level * 24}px` }}
+                        >
+                          {block.content
+                            ? renderContent(block.content, onTagClick, onDateClick, allTags)
+                            : "\u00A0"}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
         </>
       ) : (
         <div className="rounded-lg border border-gray-200 bg-white p-3">
@@ -567,6 +719,7 @@ export default function BlockEditor({
               block={block}
               blockIndex={blockIndex}
               isEditing={editingBlockId === block.id}
+              isSelected={selectedBlockIds.has(block.id)}
               editContent={editContent}
               allTags={allTags}
               showSuggestions={
@@ -582,6 +735,7 @@ export default function BlockEditor({
               onTagClick={onTagClick}
               onDateClick={onDateClick}
               onApplySuggestion={applySuggestion}
+              onBlockMouseDown={handleBlockMouseDown}
             />
           ))}
           {blocks.length === 0 && (
@@ -597,7 +751,7 @@ export default function BlockEditor({
 
       {viewMode === "date" && (
         <button
-          onClick={() => addNewBlock()}
+          onClick={addNewBlock}
           className="mt-2 rounded px-3 py-1.5 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600"
         >
           + 新しいブロック
@@ -611,6 +765,7 @@ function BlockLine({
   block,
   blockIndex,
   isEditing,
+  isSelected,
   editContent,
   allTags,
   showSuggestions,
@@ -624,10 +779,12 @@ function BlockLine({
   onTagClick,
   onDateClick,
   onApplySuggestion,
+  onBlockMouseDown,
 }: {
   block: Block;
   blockIndex: number;
   isEditing: boolean;
+  isSelected: boolean;
   editContent: string;
   allTags: TagInfo[];
   showSuggestions: boolean;
@@ -645,6 +802,7 @@ function BlockLine({
   onTagClick: (tagId: string, tagName: string) => void;
   onDateClick: (date: string) => void;
   onApplySuggestion: (tagName: string) => void;
+  onBlockMouseDown: (e: React.MouseEvent, blockIndex: number) => void;
 }) {
   const indent = block.indent_level * 24;
 
@@ -662,8 +820,9 @@ function BlockLine({
 
   return (
     <div
-      className="group relative flex items-start py-0.5"
+      className={`group relative flex items-start py-0.5 ${isSelected ? "bg-blue-100 rounded" : ""}`}
       style={{ paddingLeft: `${indent}px` }}
+      onMouseDown={(e) => onBlockMouseDown(e, blockIndex)}
     >
       {isEditing ? (
         <div className="relative flex-1">
