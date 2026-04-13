@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 
 interface Tag {
   id: string;
@@ -25,9 +25,11 @@ interface Props {
   onCloseMobile: () => void;
 }
 
-function buildTagTree(tags: Tag[]): (Tag & { children: Tag[] })[] {
-  const map = new Map<string, Tag & { children: Tag[] }>();
-  const roots: (Tag & { children: Tag[] })[] = [];
+type TagTreeNode = Tag & { children: TagTreeNode[] };
+
+function buildTagTree(tags: Tag[]): TagTreeNode[] {
+  const map = new Map<string, TagTreeNode>();
+  const roots: TagTreeNode[] = [];
 
   for (const tag of tags) {
     map.set(tag.id, { ...tag, children: [] });
@@ -58,11 +60,9 @@ export default function Sidebar({
   onTagsChange,
   onCloseMobile,
 }: Props) {
-  const [newTagName, setNewTagName] = useState("");
-  const [newTagParent, setNewTagParent] = useState<string | null>(null);
-  const [showTagForm, setShowTagForm] = useState(false);
   const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [addingChildOf, setAddingChildOf] = useState<string | null>(null); // null = root, tag id = child
 
   const tagTree = buildTagTree(tags);
 
@@ -90,19 +90,21 @@ export default function Sidebar({
     });
   };
 
-  const createTag = async () => {
-    if (!newTagName.trim()) return;
+  const createTag = async (name: string, parentId: string | null) => {
+    if (!name.trim()) return;
     const res = await fetch("/api/tags", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newTagName.trim(), parent_id: newTagParent }),
+      body: JSON.stringify({ name: name.trim(), parent_id: parentId }),
     });
     if (res.ok) {
-      setNewTagName("");
-      setNewTagParent(null);
-      setShowTagForm(false);
+      // Auto-expand parent
+      if (parentId) {
+        setExpandedTags((prev) => new Set(prev).add(parentId));
+      }
       onTagsChange();
     }
+    setAddingChildOf(null);
   };
 
   const handleItemClick = (action: () => void) => {
@@ -170,65 +172,34 @@ export default function Sidebar({
           ))}
         </div>
 
-        {/* Tags */}
+        {/* Pages (Tags) */}
         <div className="p-2">
           <div className="mb-1 flex items-center justify-between px-2">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-              タグ / ページ
+              ページ
             </h3>
             <button
-              onClick={() => setShowTagForm(!showTagForm)}
-              className="text-xs text-blue-500 hover:text-blue-700"
+              onClick={() => setAddingChildOf(addingChildOf === "__root__" ? null : "__root__")}
+              className="text-gray-400 hover:text-gray-600"
+              title="新しいページ"
             >
-              + 新規
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
             </button>
           </div>
 
-          {/* Tag creation form */}
-          {showTagForm && (
-            <div className="mb-2 rounded border border-gray-200 bg-white p-2">
-              <input
-                type="text"
-                placeholder="タグ名"
-                value={newTagName}
-                onChange={(e) => setNewTagName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.nativeEvent.isComposing) createTag();
-                }}
-                className="mb-1 w-full rounded border border-gray-200 px-2 py-1 text-sm"
-                autoFocus
-              />
-              <select
-                value={newTagParent || ""}
-                onChange={(e) => setNewTagParent(e.target.value || null)}
-                className="mb-1 w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-600"
-              >
-                <option value="">親タグなし (ルート)</option>
-                {tags.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-              <div className="flex gap-1">
-                <button
-                  onClick={createTag}
-                  className="rounded bg-blue-500 px-2 py-1 text-xs text-white hover:bg-blue-600"
-                >
-                  作成
-                </button>
-                <button
-                  onClick={() => { setShowTagForm(false); setNewTagName(""); }}
-                  className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
-                >
-                  キャンセル
-                </button>
-              </div>
-            </div>
+          {/* Inline add at root */}
+          {addingChildOf === "__root__" && (
+            <InlineTagInput
+              depth={0}
+              onSubmit={(name) => createTag(name, null)}
+              onCancel={() => setAddingChildOf(null)}
+            />
           )}
 
-          {tags.length === 0 && !showTagForm && (
-            <p className="px-3 text-xs text-gray-400">タグなし</p>
+          {tags.length === 0 && addingChildOf !== "__root__" && (
+            <p className="px-3 py-2 text-xs text-gray-400">ページなし</p>
           )}
 
           {/* Tag tree */}
@@ -240,9 +211,13 @@ export default function Sidebar({
               selectedTagId={selectedTagId}
               viewMode={viewMode}
               expandedTags={expandedTags}
+              addingChildOf={addingChildOf}
               onToggleExpand={toggleExpand}
               onSelectTag={(id, name) => handleItemClick(() => onSelectTag(id, name))}
               onDeleteTag={requestDeleteTag}
+              onAddChild={(parentId) => setAddingChildOf(addingChildOf === parentId ? null : parentId)}
+              onCreateTag={createTag}
+              onCancelAdd={() => setAddingChildOf(null)}
             />
           ))}
         </div>
@@ -273,7 +248,7 @@ export default function Sidebar({
                 </svg>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-gray-900">タグを削除</h3>
+                <h3 className="text-sm font-semibold text-gray-900">ページを削除</h3>
                 <p className="text-xs text-gray-500">この操作は取り消せません</p>
               </div>
             </div>
@@ -301,67 +276,160 @@ export default function Sidebar({
   );
 }
 
+function InlineTagInput({
+  depth,
+  onSubmit,
+  onCancel,
+}: {
+  depth: number;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  return (
+    <div
+      className="flex items-center py-0.5"
+      style={{ paddingLeft: `${8 + depth * 16}px` }}
+    >
+      <span className="mr-1 inline-block h-4 w-4 flex-shrink-0 text-center text-xs text-gray-300">
+        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+      </span>
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            onSubmit(value);
+          }
+          if (e.key === "Escape") onCancel();
+        }}
+        onBlur={() => {
+          if (value.trim()) onSubmit(value);
+          else onCancel();
+        }}
+        placeholder="ページ名..."
+        className="flex-1 rounded border border-blue-300 bg-white px-2 py-0.5 text-sm outline-none focus:ring-1 focus:ring-blue-400"
+      />
+    </div>
+  );
+}
+
 function TagNode({
   tag,
   depth,
   selectedTagId,
   viewMode,
   expandedTags,
+  addingChildOf,
   onToggleExpand,
   onSelectTag,
   onDeleteTag,
+  onAddChild,
+  onCreateTag,
+  onCancelAdd,
 }: {
-  tag: { id: string; name: string; block_count: number; children: any[] };
+  tag: TagTreeNode;
   depth: number;
   selectedTagId: string | null;
   viewMode: string;
   expandedTags: Set<string>;
+  addingChildOf: string | null;
   onToggleExpand: (id: string) => void;
   onSelectTag: (id: string, name: string) => void;
   onDeleteTag: (id: string, name: string) => void;
+  onAddChild: (parentId: string) => void;
+  onCreateTag: (name: string, parentId: string | null) => void;
+  onCancelAdd: () => void;
 }) {
   const hasChildren = tag.children.length > 0;
   const isExpanded = expandedTags.has(tag.id);
   const isSelected = viewMode === "tag" && selectedTagId === tag.id;
+  const isAddingHere = addingChildOf === tag.id;
 
   return (
     <div>
       <div
-        className={`group/tag flex items-center rounded py-1 text-sm ${
+        className={`group/tag flex items-center rounded py-1 pr-1 text-sm ${
           isSelected ? "bg-blue-100 text-blue-700" : "text-gray-600 hover:bg-gray-100"
         }`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
       >
-        {hasChildren ? (
-          <button
-            onClick={() => onToggleExpand(tag.id)}
-            className="mr-1 flex h-4 w-4 flex-shrink-0 items-center justify-center text-xs text-gray-400"
-          >
-            {isExpanded ? "▼" : "▶"}
-          </button>
-        ) : (
-          <span className="mr-1 inline-block h-4 w-4 flex-shrink-0" />
-        )}
+        {/* Expand/collapse toggle */}
+        <button
+          onClick={() => {
+            if (hasChildren) onToggleExpand(tag.id);
+          }}
+          className={`mr-1 flex h-4 w-4 flex-shrink-0 items-center justify-center text-xs ${
+            hasChildren ? "text-gray-400 hover:text-gray-600" : "text-transparent"
+          }`}
+        >
+          {hasChildren ? (
+            <svg
+              className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+            </svg>
+          ) : (
+            <svg className="h-3.5 w-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          )}
+        </button>
+
+        {/* Page name */}
         <button
           onClick={() => onSelectTag(tag.id, tag.name)}
           className="flex-1 text-left truncate"
         >
-          <span className="tag-inline text-xs">{tag.name}</span>
-          <span className="ml-1 text-xs text-gray-400">{tag.block_count}</span>
+          {tag.name}
         </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDeleteTag(tag.id, tag.name);
-          }}
-          className="mr-1 hidden group-hover/tag:block flex-shrink-0 text-xs text-gray-400 hover:text-red-500"
-        >
-          ×
-        </button>
+
+        {/* Hover actions */}
+        <div className="hidden items-center gap-0.5 group-hover/tag:flex">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddChild(tag.id);
+            }}
+            className="flex h-5 w-5 items-center justify-center rounded text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+            title="サブページ追加"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDeleteTag(tag.id, tag.name);
+            }}
+            className="flex h-5 w-5 items-center justify-center rounded text-gray-400 hover:bg-red-50 hover:text-red-500"
+            title="削除"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        </div>
       </div>
-      {hasChildren && isExpanded && (
+
+      {/* Children + inline add */}
+      {(hasChildren && isExpanded || isAddingHere) && (
         <div>
-          {tag.children.map((child: any) => (
+          {hasChildren && isExpanded && tag.children.map((child) => (
             <TagNode
               key={child.id}
               tag={child}
@@ -369,11 +437,22 @@ function TagNode({
               selectedTagId={selectedTagId}
               viewMode={viewMode}
               expandedTags={expandedTags}
+              addingChildOf={addingChildOf}
               onToggleExpand={onToggleExpand}
               onSelectTag={onSelectTag}
               onDeleteTag={onDeleteTag}
+              onAddChild={onAddChild}
+              onCreateTag={onCreateTag}
+              onCancelAdd={onCancelAdd}
             />
           ))}
+          {isAddingHere && (
+            <InlineTagInput
+              depth={depth + 1}
+              onSubmit={(name) => onCreateTag(name, tag.id)}
+              onCancel={onCancelAdd}
+            />
+          )}
         </div>
       )}
     </div>
