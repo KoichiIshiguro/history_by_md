@@ -29,11 +29,24 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          command_timeout: 10m
           script: |
+            set -e
             cd /var/www/histmd.saltybullet.com
+
+            # Stop service before updating
+            sudo systemctl stop histmd
+
+            # Pull and install
             git pull origin main
-            npm ci --production=false
+            npm ci
+
+            # Build
             npx next build
-            sudo systemctl restart histmd
+
+            # Start service
+            sudo systemctl start histmd
             sleep 3
+
+            # Health check
             curl -s -o /dev/null -w 'HTTP %{http_code}' http://127.0.0.1:3101/ | grep -q '200' && echo 'Deploy successful!' || echo 'Deploy might have failed'
