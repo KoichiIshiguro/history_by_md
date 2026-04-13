@@ -268,6 +268,9 @@ export default function BlockEditor({
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
+  const [editingPageTitle, setEditingPageTitle] = useState(false);
+  const [pageTitleDraft, setPageTitleDraft] = useState("");
+  const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -685,6 +688,93 @@ export default function BlockEditor({
       onKeyUp={(e) => { if (e.key === "Shift") shiftHeldRef.current = false; }}>
       {viewMode === "page" ? (
         <>
+          {/* Page title (editable) */}
+          <div className="mb-4">
+            {editingPageTitle ? (
+              <input
+                type="text"
+                value={pageTitleDraft}
+                onChange={(e) => setPageTitleDraft(e.target.value)}
+                onBlur={async () => {
+                  const trimmed = pageTitleDraft.trim();
+                  if (trimmed && trimmed !== selectedPageName.split("/").pop()) {
+                    await fetch("/api/pages", {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id: selectedPageId, name: trimmed }),
+                    });
+                    onDataChange();
+                  }
+                  setEditingPageTitle(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    (e.target as HTMLInputElement).blur();
+                  }
+                  if (e.key === "Escape") setEditingPageTitle(false);
+                }}
+                autoFocus
+                className="w-full text-xl font-bold text-gray-800 bg-orange-50 border border-orange-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-orange-400"
+              />
+            ) : (
+              <h2
+                className="text-xl font-bold text-gray-800 cursor-pointer hover:text-orange-600 transition px-1"
+                onClick={() => {
+                  setPageTitleDraft(selectedPageName.split("/").pop() || selectedPageName);
+                  setEditingPageTitle(true);
+                }}
+                title="クリックでタイトル編集"
+              >
+                {selectedPageName.split("/").pop() || selectedPageName}
+              </h2>
+            )}
+          </div>
+
+          {/* Backlinks accordion */}
+          {(Object.keys(groupedPageRefs).length > 0 || Object.keys(groupedDateRefs).length > 0) && (
+            <div className="mb-4 rounded-lg border border-gray-200 bg-white">
+              <button
+                onClick={() => setBacklinksOpen(!backlinksOpen)}
+                className="flex w-full items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600"
+              >
+                <span className="flex items-center gap-1">
+                  <svg className={`h-3 w-3 transition-transform ${backlinksOpen ? "rotate-90" : ""}`} fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                  </svg>
+                  このページへの参照
+                </span>
+                <span className="text-gray-400 font-normal normal-case">
+                  {Object.values(groupedPageRefs).reduce((s, g) => s + g.blocks.length, 0) + Object.values(groupedDateRefs).reduce((s, g) => s + g.length, 0)}件
+                </span>
+              </button>
+              {backlinksOpen && (
+                <div className="border-t border-gray-100 px-3 py-2 space-y-3">
+                  {Object.entries(groupedPageRefs).map(([pageId, { name, blocks: refBlocks }]) => (
+                    <div key={pageId}>
+                      <h4 className="mb-1 text-sm font-medium">
+                        <span className="page-link cursor-pointer" onClick={() => { const p = allPages.find((pp) => pp.id === pageId); if (p) onPageClick(p.id, p.name); }}>{name}</span>
+                      </h4>
+                      <div className="rounded border border-gray-100 bg-gray-50 p-2">
+                        {refBlocks.map((b) => <BlockLine key={b.id} {...blockLineProps(b, 0, true)} />)}
+                      </div>
+                    </div>
+                  ))}
+                  {Object.entries(groupedDateRefs).sort(([a], [b]) => b.localeCompare(a)).map(([date, refBlocks]) => (
+                    <div key={date}>
+                      <h4 className="mb-1 text-sm font-medium">
+                        <span className="date-link cursor-pointer" onClick={() => onDateClick(date)}>{date}</span>
+                      </h4>
+                      <div className="rounded border border-gray-100 bg-gray-50 p-2">
+                        {refBlocks.map((b) => <BlockLine key={b.id} {...blockLineProps(b, 0, true)} />)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Page content */}
           <div className="rounded-lg border border-gray-200 bg-white p-3">
             {blocks.map((block, i) => <BlockLine key={block.id} {...blockLineProps(block, i)} />)}
@@ -694,39 +784,6 @@ export default function BlockEditor({
           </div>
           <button onClick={addNewBlock} className="mt-2 rounded px-3 py-1.5 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600">+ 新しいブロック</button>
 
-          {/* 2. Page references */}
-          {Object.keys(groupedPageRefs).length > 0 && (
-            <div className="mt-6">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">ページからの参照</h3>
-              {Object.entries(groupedPageRefs).map(([pageId, { name, blocks: refBlocks }]) => (
-                <div key={pageId} className="mb-4">
-                  <h4 className="mb-1 text-sm font-medium">
-                    <span className="page-link cursor-pointer" onClick={() => { const p = allPages.find((pp) => pp.id === pageId); if (p) onPageClick(p.id, p.name); }}>{name}</span>
-                  </h4>
-                  <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-                    {refBlocks.map((b) => <BlockLine key={b.id} {...blockLineProps(b, 0, true)} />)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* 3. Date references */}
-          {Object.keys(groupedDateRefs).length > 0 && (
-            <div className="mt-6">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">日付からの参照</h3>
-              {Object.entries(groupedDateRefs).sort(([a], [b]) => b.localeCompare(a)).map(([date, refBlocks]) => (
-                <div key={date} className="mb-4">
-                  <h4 className="mb-1 text-sm font-medium">
-                    <span className="date-link cursor-pointer" onClick={() => onDateClick(date)}>{date}</span>
-                  </h4>
-                  <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-                    {refBlocks.map((b) => <BlockLine key={b.id} {...blockLineProps(b, 0, true)} />)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </>
       ) : viewMode === "tag" && groupedTagBlocks ? (
         <>
@@ -782,7 +839,13 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
     <div className={`group relative flex items-stretch min-h-[2em] ${isSelected ? "bg-blue-100 rounded" : ""} ${!isEditing ? "cursor-text hover:bg-gray-50 rounded" : ""}`}
       style={{ paddingLeft: `${indent}px` }}
       onMouseDown={(e) => onBlockMouseDown(e, blockIndex)}
-      onMouseUp={() => { if (!isEditing) onStartEditing(block); }}>
+      onMouseUp={(e) => {
+        if (isEditing) return;
+        // Don't enter edit mode if clicking on a link (page, tag, date)
+        const target = e.target as HTMLElement;
+        if (target.closest('.page-link, .tag-inline, .date-link, .gfm-link')) return;
+        onStartEditing(block);
+      }}>
       {isEditing ? (
         <div className="relative flex-1">
           <textarea ref={(el) => setInputRef(block.id, el)}
