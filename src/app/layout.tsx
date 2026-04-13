@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "WebLogseq",
+  title: "history-md",
   description: "Web-based note management tool",
 };
 
