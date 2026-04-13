@@ -451,7 +451,6 @@ export default function TemplateEditor({
           <div className="py-4 cursor-text text-sm text-gray-300 min-h-[2em]" onClick={addNewBlock}>&nbsp;</div>
         )}
       </div>
-      <button onClick={addNewBlock} className="mt-2 rounded px-3 py-1.5 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600">+ 新しいブロック</button>
     </div>
   );
 }
