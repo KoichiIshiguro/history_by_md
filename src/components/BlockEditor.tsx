@@ -235,6 +235,9 @@ export default function BlockEditor({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>, block: Block) => {
+    // IME変換中はキー操作を無視
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       // Save current and create new block
