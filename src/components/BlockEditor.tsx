@@ -175,7 +175,8 @@ export default function BlockEditor({
   const saveBlocks = useCallback(
     async (updatedBlocks: Block[]) => {
       if (viewMode === "tag") {
-        // In tag view, save individual blocks
+        // In tag view, save only changed blocks individually via PUT
+        // Server will recompute tags for the date automatically
         for (const block of updatedBlocks) {
           await fetch("/api/blocks", {
             method: "PUT",
@@ -185,12 +186,11 @@ export default function BlockEditor({
               content: block.content,
               indent_level: block.indent_level,
               sort_order: block.sort_order,
-              tags: extractTags(block.content),
             }),
           });
         }
       } else {
-        // In date view, bulk save
+        // In date view, bulk save with hierarchical tag computation on server
         await fetch("/api/blocks/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -201,7 +201,6 @@ export default function BlockEditor({
               content: b.content,
               indent_level: b.indent_level,
               sort_order: i,
-              tags: extractTags(b.content),
             })),
           }),
         });

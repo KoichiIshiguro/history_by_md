@@ -2,6 +2,52 @@ import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { NextRequest } from "next/server";
 
+function extractTags(content: string): string[] {
+  const matches = content.match(/#([^\s#]+)/g);
+  if (!matches) return [];
+  return matches.map((m) => m.slice(1));
+}
+
+// Given an ordered list of blocks, compute which tags apply to each block.
+// A #tag on a block "owns" all subsequent blocks that are indented deeper,
+// until a block at the same or shallower indent level is reached.
+function computeBlockTags(
+  blocks: Array<{ content: string; indent_level: number }>
+): string[][] {
+  const result: string[][] = [];
+  // Stack of active tags: { tagNames, indent_level }
+  const tagStack: Array<{ tags: string[]; indent: number }> = [];
+
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    const blockIndent = block.indent_level;
+
+    // Pop tags from stack that are at same or deeper indent than current block
+    while (tagStack.length > 0 && tagStack[tagStack.length - 1].indent >= blockIndent) {
+      tagStack.pop();
+    }
+
+    // Collect all active tags from the stack
+    const activeTags: string[] = [];
+    for (const entry of tagStack) {
+      activeTags.push(...entry.tags);
+    }
+
+    // Extract tags from this block's own content
+    const ownTags = extractTags(block.content);
+
+    // This block gets: inherited tags + own tags
+    result.push([...new Set([...activeTags, ...ownTags])]);
+
+    // If this block has tags, push onto stack for children
+    if (ownTags.length > 0) {
+      tagStack.push({ tags: ownTags, indent: blockIndent });
+    }
+  }
+
+  return result;
+}
+
 // Bulk save endpoint - saves entire page content at once
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -19,9 +65,11 @@ export async function POST(request: NextRequest) {
       indent_level: number;
       sort_order: number;
       parent_id?: string;
-      tags: string[];
     }>;
   };
+
+  // Compute tags for each block based on hierarchy
+  const blockTags = computeBlockTags(blocks);
 
   const saveTransaction = db.transaction(() => {
     // Delete existing blocks for this date
@@ -46,8 +94,11 @@ export async function POST(request: NextRequest) {
     );
     const findTag = db.prepare("SELECT id FROM tags WHERE name = ? AND user_id = ?");
 
-    for (const block of blocks) {
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      const tags = blockTags[i];
       const blockId = block.id || crypto.randomUUID();
+
       insertBlock.run(
         blockId,
         user.id,
@@ -58,16 +109,14 @@ export async function POST(request: NextRequest) {
         block.parent_id || null
       );
 
-      if (block.tags && block.tags.length > 0) {
-        for (const tagName of block.tags) {
-          let tag = findTag.get(tagName, user.id) as { id: string } | undefined;
-          if (!tag) {
-            const tagId = crypto.randomUUID();
-            insertTag.run(tagId, tagName, user.id);
-            tag = { id: tagId };
-          }
-          insertBlockTag.run(blockId, tag.id);
+      for (const tagName of tags) {
+        let tag = findTag.get(tagName, user.id) as { id: string } | undefined;
+        if (!tag) {
+          const tagId = crypto.randomUUID();
+          insertTag.run(tagId, tagName, user.id);
+          tag = { id: tagId };
         }
+        insertBlockTag.run(blockId, tag.id);
       }
     }
   });
