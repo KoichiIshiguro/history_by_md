@@ -41,11 +41,11 @@ interface Block {
   source_page_id?: string;
 }
 
-interface PageInfo { id: string; name: string; parent_id?: string | null; ref_count?: number; full_path?: string; }
-interface TagInfo { id: string; name: string; block_count?: number; }
+export interface PageInfo { id: string; name: string; parent_id?: string | null; ref_count?: number; full_path?: string; }
+export interface TagInfo { id: string; name: string; block_count?: number; }
 
 interface Props {
-  viewMode: "date" | "page" | "tag" | "admin";
+  viewMode: "date" | "page" | "tag" | "admin" | "actions";
   selectedDate: string;
   selectedPageId: string | null;
   selectedPageName: string;
@@ -60,7 +60,7 @@ interface Props {
 }
 
 // Pre-process custom syntax into HTML spans before markdown rendering
-function preprocessCustomSyntax(content: string, allPages: PageInfo[], allTags: TagInfo[]): string {
+export function preprocessCustomSyntax(content: string, allPages: PageInfo[], allTags: TagInfo[]): string {
   let result = content;
 
   // {{page/path}} → HTML span
@@ -118,7 +118,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
 }
 
 // Markdown content renderer with GFM + custom syntax
-function MarkdownContent({
+export function MarkdownContent({
   content, allPages, allTags, onPageClick, onTagClick, onDateClick,
 }: {
   content: string;
@@ -270,6 +270,7 @@ export default function BlockEditor({
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
   const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const inputRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const shiftHeldRef = useRef(false);
@@ -408,6 +409,21 @@ export default function BlockEditor({
 
   const startEditing = (block: Block) => {
     if (selectedBlockIds.size > 0) return;
+    if (blurTimeoutRef.current) { clearTimeout(blurTimeoutRef.current); blurTimeoutRef.current = null; }
+    // Save current editing block before switching
+    if (editingBlockId && editingBlockId !== block.id) {
+      const refBlock = [...pageRefs, ...dateRefs].find((b) => b.id === editingBlockId);
+      if (refBlock) {
+        const updated = { ...refBlock, content: editContent };
+        setPageRefs(pageRefs.map((b) => b.id === editingBlockId ? updated : b));
+        setDateRefs(dateRefs.map((b) => b.id === editingBlockId ? updated : b));
+        debouncedRefSave(updated);
+      } else {
+        const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+        setBlocks(updated);
+        debouncedSave(updated);
+      }
+    }
     setEditingBlockId(block.id); setEditContent(block.content); setShowSuggestions(false);
     setTimeout(() => { inputRefs.current.get(block.id)?.focus(); }, 0);
   };
@@ -697,7 +713,8 @@ export default function BlockEditor({
     suggestions, selectedSuggestion,
     allPages, allTags,
     setInputRef, onStartEditing: startEditing,
-    onEditContentChange: handleContentChange, onFinishEditing: finishEditing,
+    onEditContentChange: handleContentChange,
+    onFinishEditing: () => { blurTimeoutRef.current = setTimeout(finishEditing, 150); },
     onKeyDown: isRef ? ((e: KeyboardEvent<HTMLTextAreaElement>, b: Block, _i: number) => handleRefKeyDown(e, b)) : handleKeyDown,
     onPageClick, onTagClick, onDateClick, onApplySuggestion: applySuggestion,
     onBlockMouseDown: isRef ? (() => {}) : handleBlockMouseDown,
@@ -823,15 +840,15 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
   const indent = block.indent_level * 24;
 
   return (
-    <div className={`group relative flex items-start ${isSelected ? "bg-blue-100 rounded" : ""} ${!isEditing ? "cursor-text hover:bg-gray-50 rounded" : ""}`}
+    <div className={`group relative flex items-stretch min-h-[2em] ${isSelected ? "bg-blue-100 rounded" : ""} ${!isEditing ? "cursor-text hover:bg-gray-50 rounded" : ""}`}
       style={{ paddingLeft: `${indent}px` }}
       onMouseDown={(e) => onBlockMouseDown(e, blockIndex)}
-      onClick={() => { if (!isEditing) onStartEditing(block); }}>
+      onMouseUp={() => { if (!isEditing) onStartEditing(block); }}>
       {isEditing ? (
         <div className="relative flex-1">
           <textarea ref={(el) => setInputRef(block.id, el)}
             value={editContent} onChange={(e) => onEditContentChange(e.target.value)}
-            onBlur={() => setTimeout(onFinishEditing, 150)}
+            onBlur={onFinishEditing}
             onKeyDown={(e) => onKeyDown(e, block, blockIndex)}
             className="block-line w-full resize-none border-none bg-blue-50 p-1 text-sm outline-none rounded leading-snug"
             rows={Math.max(1, editContent.split("\n").length)} autoFocus />
@@ -852,7 +869,7 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
           )}
         </div>
       ) : (
-        <div className="block-line block-content flex-1 p-1 text-sm">
+        <div className="block-line block-content flex-1 p-1 text-sm w-full select-none">
           {block.content
             ? <MarkdownContent content={block.content} allPages={allPages} allTags={allTags}
                 onPageClick={onPageClick} onTagClick={onTagClick} onDateClick={onDateClick} />

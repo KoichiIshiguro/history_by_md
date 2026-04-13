@@ -29,6 +29,7 @@ interface Props {
   onSelectPage: (pageId: string, pageName: string) => void;
   onSelectTag: (tagId: string, tagName: string) => void;
   onSelectAdmin: () => void;
+  onSelectActions: () => void;
   onSignOut: () => void;
   onPagesChange: () => void;
   onTagsChange: () => void;
@@ -55,7 +56,7 @@ function buildPageTree(pages: Page[]): PageTreeNode[] {
 function groupDatesByMonth(dates: string[]): Map<string, string[]> {
   const grouped = new Map<string, string[]>();
   for (const date of dates) {
-    const month = date.slice(0, 7); // YYYY-MM
+    const month = date.slice(0, 7);
     if (!grouped.has(month)) grouped.set(month, []);
     grouped.get(month)!.push(date);
   }
@@ -69,8 +70,8 @@ function formatMonth(ym: string): string {
 
 export default function Sidebar({
   user, isAdmin, pages, tags, dates, selectedDate, selectedPageId, selectedTagId,
-  viewMode, onSelectDate, onSelectPage, onSelectTag, onSelectAdmin, onSignOut,
-  onPagesChange, onTagsChange, onCloseMobile,
+  viewMode, onSelectDate, onSelectPage, onSelectTag, onSelectAdmin, onSelectActions,
+  onSignOut, onPagesChange, onTagsChange, onCloseMobile,
 }: Props) {
   const [expandedPages, setExpandedPages] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
@@ -81,6 +82,7 @@ export default function Sidebar({
     return new Set([now]);
   });
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   const pageTree = buildPageTree(pages);
   const filteredTags = tagSearch
@@ -144,27 +146,63 @@ export default function Sidebar({
   return (
     <div className="flex h-full flex-col">
       {/* User */}
-      <div className="border-b border-gray-200 p-3">
-        <div className="flex items-center gap-2">
-          {user.image && <img src={user.image} alt="" className="h-8 w-8 rounded-full" />}
-          <div className="min-w-0 flex-1">
+      <div className="relative border-b border-orange-200 p-3">
+        <button onClick={() => setShowUserMenu(!showUserMenu)} className="flex w-full items-center gap-2 rounded-lg p-1 hover:bg-orange-50 transition">
+          {user.image ? (
+            <img src={user.image} alt="" className="h-8 w-8 rounded-full" />
+          ) : (
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-100 text-sm font-bold text-orange-600">
+              {user.name?.[0] || "U"}
+            </div>
+          )}
+          <div className="min-w-0 flex-1 text-left">
             <p className="truncate text-sm font-medium text-gray-800">{user.name}</p>
             <p className="truncate text-xs text-gray-500">{user.email}</p>
           </div>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-auto">
-        {isAdmin && (
-          <div className="border-b border-gray-200 p-2">
-            <button
-              onClick={() => click(onSelectAdmin)}
-              className={`w-full rounded px-3 py-1.5 text-left text-sm ${viewMode === "admin" ? "bg-blue-100 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
-            >
-              ⚙ ユーザー管理
+          <svg className={`h-4 w-4 text-gray-400 transition-transform ${showUserMenu ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {showUserMenu && (
+          <div className="absolute left-2 right-2 top-full z-20 mt-1 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+            {isAdmin && (
+              <button onClick={() => { click(onSelectAdmin); setShowUserMenu(false); }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                ユーザー管理
+              </button>
+            )}
+            <button onClick={() => { onSignOut(); setShowUserMenu(false); }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              ログアウト
             </button>
           </div>
         )}
+      </div>
+
+      <div className="flex-1 overflow-auto">
+        {/* All Actions button */}
+        <div className="p-2">
+          <button
+            onClick={() => click(onSelectActions)}
+            className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
+              viewMode === "actions"
+                ? "bg-orange-100 text-orange-700 border border-orange-300"
+                : "text-gray-600 hover:bg-orange-50 border border-transparent"
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+            全アクション
+          </button>
+        </div>
 
         {/* 1. Pages */}
         <div className="p-2">
@@ -261,13 +299,13 @@ export default function Sidebar({
             <>
               <div className="mb-1 px-1">
                 <input type="text" value={tagSearch} onChange={(e) => setTagSearch(e.target.value)}
-                  placeholder="タグを検索..." className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs outline-none focus:border-blue-300" />
+                  placeholder="タグを検索..." className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs outline-none focus:border-orange-300" />
               </div>
               {filteredTags.length === 0 && <p className="px-3 py-1 text-xs text-gray-400">タグなし</p>}
               {filteredTags.map((tag) => (
                 <button key={tag.id} onClick={() => click(() => onSelectTag(tag.id, tag.name))}
                   className={`w-full rounded px-3 py-1 text-left text-sm flex items-center justify-between ${
-                    viewMode === "tag" && selectedTagId === tag.id ? "bg-blue-100 text-blue-700" : "text-gray-600 hover:bg-gray-100"
+                    viewMode === "tag" && selectedTagId === tag.id ? "bg-orange-100 text-orange-700" : "text-gray-600 hover:bg-gray-100"
                   }`}>
                   <span>#{tag.name}</span>
                   <span className="text-xs text-gray-400">{tag.block_count}</span>
@@ -276,11 +314,6 @@ export default function Sidebar({
             </>
           )}
         </div>
-      </div>
-
-      {/* Sign out */}
-      <div className="border-t border-gray-200 p-2">
-        <button onClick={onSignOut} className="w-full rounded px-3 py-1.5 text-left text-sm text-gray-500 hover:bg-gray-100">ログアウト</button>
       </div>
 
       {/* Delete modal */}
@@ -327,7 +360,7 @@ function InlineInput({ depth, placeholder, onSubmit, onCancel }: {
         }}
         onBlur={() => { value.trim() ? onSubmit(value) : onCancel(); }}
         placeholder={placeholder}
-        className="flex-1 rounded border border-blue-300 bg-white px-2 py-0.5 text-sm outline-none focus:ring-1 focus:ring-blue-400" />
+        className="flex-1 rounded border border-orange-300 bg-white px-2 py-0.5 text-sm outline-none focus:ring-1 focus:ring-orange-400" />
     </div>
   );
 }
@@ -347,7 +380,7 @@ function PageNode({ page, depth, selectedPageId, viewMode, expandedPages, adding
 
   return (
     <div>
-      <div className={`group/pg flex items-center rounded py-1 pr-1 text-sm ${isSelected ? "bg-blue-100 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+      <div className={`group/pg flex items-center rounded py-1 pr-1 text-sm ${isSelected ? "bg-orange-100 text-orange-700" : "text-gray-600 hover:bg-gray-100"}`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}>
         <button onClick={() => hasChildren && onToggleExpand(page.id)}
           className={`mr-1 flex h-4 w-4 flex-shrink-0 items-center justify-center text-xs ${hasChildren ? "text-gray-400 hover:text-gray-600" : "text-transparent"}`}>

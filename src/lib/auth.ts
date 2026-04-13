@@ -1,14 +1,29 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
+import Credentials from "next-auth/providers/credentials";
 import { getDb } from "./db";
 
+const providers: any[] = [
+  Google({
+    clientId: process.env.GOOGLE_CLIENT_ID!,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+  }),
+];
+
+if (process.env.NODE_ENV === "development") {
+  providers.push(
+    Credentials({
+      name: "Dev Login",
+      credentials: {},
+      async authorize() {
+        return { id: "dev-user", email: "dev@localhost", name: "Dev User", image: null };
+      },
+    })
+  );
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  providers: [
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
-  ],
+  providers,
   callbacks: {
     async signIn({ user }) {
       if (!user.email) return false;

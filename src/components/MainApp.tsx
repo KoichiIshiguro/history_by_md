@@ -5,8 +5,9 @@ import { useState, useEffect, useCallback } from "react";
 import BlockEditor from "./BlockEditor";
 import AdminPanel from "./AdminPanel";
 import Sidebar from "./Sidebar";
+import ActionList from "./ActionList";
 
-type ViewMode = "date" | "page" | "tag" | "admin";
+type ViewMode = "date" | "page" | "tag" | "admin" | "actions";
 
 interface Page {
   id: string;
@@ -40,6 +41,7 @@ export default function MainApp({ user, isAdmin }: Props) {
   const [tags, setTags] = useState<Tag[]>([]);
   const [dates, setDates] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
@@ -80,7 +82,6 @@ export default function MainApp({ user, isAdmin }: Props) {
   const handleSelectPage = (pageId: string, pageName: string) => {
     setViewMode("page");
     setSelectedPageId(pageId);
-    // Show full_path in header if available
     const page = pages.find((p) => p.id === pageId);
     setSelectedPageName(page?.full_path || pageName);
   };
@@ -106,15 +107,20 @@ export default function MainApp({ user, isAdmin }: Props) {
     if (isMobile) setSidebarOpen(false);
   };
 
+  const showRightSidebar = viewMode === "page" && selectedPageId;
+
   return (
     <div className="flex h-screen overflow-hidden">
+      {/* Left sidebar overlay */}
       {isMobile && sidebarOpen && (
-        <div
-          className="fixed inset-0 z-20 bg-black/30"
-          onClick={() => setSidebarOpen(false)}
-        />
+        <div className="fixed inset-0 z-20 bg-black/30" onClick={() => setSidebarOpen(false)} />
+      )}
+      {/* Right sidebar overlay */}
+      {isMobile && rightSidebarOpen && (
+        <div className="fixed inset-0 z-20 bg-black/30" onClick={() => setRightSidebarOpen(false)} />
       )}
 
+      {/* Left sidebar */}
       <div
         className={`${
           isMobile
@@ -122,7 +128,7 @@ export default function MainApp({ user, isAdmin }: Props) {
                 sidebarOpen ? "translate-x-0" : "-translate-x-full"
               }`
             : `${sidebarOpen ? "w-64" : "w-0"} transition-all duration-200 overflow-hidden`
-        } border-r border-gray-200 bg-gray-50 flex-shrink-0`}
+        } border-r border-orange-200 bg-orange-50/30 flex-shrink-0`}
       >
         <Sidebar
           user={user}
@@ -138,6 +144,7 @@ export default function MainApp({ user, isAdmin }: Props) {
           onSelectPage={handleSelectPage}
           onSelectTag={handleSelectTag}
           onSelectAdmin={() => setViewMode("admin")}
+          onSelectActions={() => setViewMode("actions")}
           onSignOut={() => signOut()}
           onPagesChange={fetchPages}
           onTagsChange={fetchTags}
@@ -145,12 +152,13 @@ export default function MainApp({ user, isAdmin }: Props) {
         />
       </div>
 
+      {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-2">
+        <header className="flex items-center justify-between border-b border-orange-100 bg-white px-4 py-2">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="rounded p-1.5 text-gray-500 hover:bg-gray-100"
+              className="rounded p-1.5 text-gray-500 hover:bg-orange-50"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -159,75 +167,141 @@ export default function MainApp({ user, isAdmin }: Props) {
             <h1 className="text-lg font-semibold text-gray-800">
               {viewMode === "date" && (
                 <>
-                  <span className="text-gray-400 text-sm mr-2">日付</span>
+                  <span className="text-orange-400 text-sm mr-2">日付</span>
                   {selectedDate}
                 </>
               )}
               {viewMode === "page" && (
                 <>
-                  <span className="text-gray-400 text-sm mr-2">ページ</span>
+                  <span className="text-orange-400 text-sm mr-2">ページ</span>
                   {selectedPageName}
                 </>
               )}
               {viewMode === "tag" && (
                 <>
-                  <span className="text-gray-400 text-sm mr-2">タグ</span>
+                  <span className="text-orange-400 text-sm mr-2">タグ</span>
                   <span className="tag-inline">{selectedTagName}</span>
                 </>
+              )}
+              {viewMode === "actions" && (
+                <span className="text-orange-600">全アクション</span>
               )}
               {viewMode === "admin" && "ユーザー管理"}
             </h1>
           </div>
-          {viewMode === "date" && (
-            <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1">
+            {/* Right sidebar toggle (mobile, page view only) */}
+            {isMobile && showRightSidebar && (
               <button
-                onClick={() => {
-                  const d = new Date(selectedDate);
-                  d.setDate(d.getDate() - 1);
-                  setSelectedDate(d.toISOString().split("T")[0]);
-                }}
-                className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
+                onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+                className={`rounded p-1.5 transition ${rightSidebarOpen ? "bg-orange-100 text-orange-600" : "text-gray-500 hover:bg-orange-50"}`}
+                title="アクション"
               >
-                ←
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                </svg>
               </button>
-              <button
-                onClick={() => setSelectedDate(new Date().toISOString().split("T")[0])}
-                className="rounded px-2 py-1 text-sm text-blue-600 hover:bg-blue-50"
-              >
-                今日
-              </button>
-              <button
-                onClick={() => {
-                  const d = new Date(selectedDate);
-                  d.setDate(d.getDate() + 1);
-                  setSelectedDate(d.toISOString().split("T")[0]);
-                }}
-                className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
-              >
-                →
-              </button>
-            </div>
-          )}
+            )}
+            {viewMode === "date" && (
+              <>
+                <button
+                  onClick={() => {
+                    const d = new Date(selectedDate);
+                    d.setDate(d.getDate() - 1);
+                    setSelectedDate(d.toISOString().split("T")[0]);
+                  }}
+                  className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-orange-50"
+                >
+                  &larr;
+                </button>
+                <button
+                  onClick={() => setSelectedDate(new Date().toISOString().split("T")[0])}
+                  className="rounded px-2 py-1 text-sm text-orange-600 hover:bg-orange-50 font-medium"
+                >
+                  今日
+                </button>
+                <button
+                  onClick={() => {
+                    const d = new Date(selectedDate);
+                    d.setDate(d.getDate() + 1);
+                    setSelectedDate(d.toISOString().split("T")[0]);
+                  }}
+                  className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-orange-50"
+                >
+                  &rarr;
+                </button>
+              </>
+            )}
+          </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-4">
-          {viewMode === "admin" && isAdmin ? (
-            <AdminPanel />
-          ) : (
-            <BlockEditor
-              viewMode={viewMode}
-              selectedDate={selectedDate}
-              selectedPageId={selectedPageId}
-              selectedPageName={selectedPageName}
-              selectedTagId={selectedTagId}
-              selectedTagName={selectedTagName}
-              allPages={pages}
-              allTags={tags}
-              onPageClick={handleSelectPage}
-              onTagClick={handleSelectTag}
-              onDateClick={handleSelectDate}
-              onDataChange={handleDataChange}
-            />
+        <main className="flex-1 flex overflow-hidden">
+          <div className="flex-1 overflow-auto p-4">
+            {viewMode === "actions" ? (
+              <ActionList
+                allPages={pages}
+                allTags={tags}
+                onPageClick={handleSelectPage}
+                onTagClick={handleSelectTag}
+                onDateClick={handleSelectDate}
+              />
+            ) : viewMode === "admin" && isAdmin ? (
+              <AdminPanel />
+            ) : (
+              <BlockEditor
+                viewMode={viewMode}
+                selectedDate={selectedDate}
+                selectedPageId={selectedPageId}
+                selectedPageName={selectedPageName}
+                selectedTagId={selectedTagId}
+                selectedTagName={selectedTagName}
+                allPages={pages}
+                allTags={tags}
+                onPageClick={handleSelectPage}
+                onTagClick={handleSelectTag}
+                onDateClick={handleSelectDate}
+                onDataChange={handleDataChange}
+              />
+            )}
+          </div>
+          {/* Right sidebar - desktop */}
+          {showRightSidebar && !isMobile && (
+            <div className="w-72 border-l border-orange-100 bg-orange-50/30 overflow-auto p-3 flex-shrink-0">
+              <h3 className="text-sm font-semibold text-orange-600 mb-2">アクション</h3>
+              <ActionList
+                pageId={selectedPageId!}
+                allPages={pages}
+                allTags={tags}
+                onPageClick={handleSelectPage}
+                onTagClick={handleSelectTag}
+                onDateClick={handleSelectDate}
+              />
+            </div>
+          )}
+          {/* Right sidebar - mobile (slide in from right) */}
+          {showRightSidebar && isMobile && (
+            <div
+              className={`fixed inset-y-0 right-0 z-30 w-72 transform transition-transform duration-200 border-l border-orange-100 bg-white overflow-auto p-3 ${
+                rightSidebarOpen ? "translate-x-0" : "translate-x-full"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-orange-600">アクション</h3>
+                <button onClick={() => setRightSidebarOpen(false)} className="rounded p-1 text-gray-400 hover:bg-gray-100">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <ActionList
+                pageId={selectedPageId!}
+                allPages={pages}
+                allTags={tags}
+                onPageClick={handleSelectPage}
+                onTagClick={handleSelectTag}
+                onDateClick={handleSelectDate}
+              />
+            </div>
           )}
         </main>
       </div>

@@ -2,7 +2,7 @@
 
 import { signIn } from "next-auth/react";
 
-export default function LoginPage() {
+export default function LoginPage({ isDev = false }: { isDev?: boolean }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
       <div className="w-full max-w-sm rounded-lg bg-white p-8 shadow-md">
@@ -36,6 +36,14 @@ export default function LoginPage() {
           </svg>
           Googleでログイン
         </button>
+        {isDev && (
+          <button
+            onClick={() => signIn("credentials", { redirect: true, callbackUrl: "/" })}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm font-medium text-gray-500 transition hover:bg-gray-100"
+          >
+            Dev Login (no auth)
+          </button>
+        )}
       </div>
     </div>
   );
