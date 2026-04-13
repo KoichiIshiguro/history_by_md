@@ -6,8 +6,9 @@ import BlockEditor from "./BlockEditor";
 import AdminPanel from "./AdminPanel";
 import Sidebar from "./Sidebar";
 import ActionList from "./ActionList";
+import TemplateEditor from "./TemplateEditor";
 
-type ViewMode = "date" | "page" | "tag" | "admin" | "actions";
+type ViewMode = "date" | "page" | "tag" | "admin" | "actions" | "templates";
 
 interface Page {
   id: string;
@@ -43,6 +44,8 @@ export default function MainApp({ user, isAdmin }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [selectedTemplateName, setSelectedTemplateName] = useState("");
 
   // Swipe gesture handling
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -205,6 +208,7 @@ export default function MainApp({ user, isAdmin }: Props) {
           onSelectTag={handleSelectTag}
           onSelectAdmin={() => setViewMode("admin")}
           onSelectActions={() => setViewMode("actions")}
+          onSelectTemplates={() => { setViewMode("templates"); setSelectedTemplateId(null); setSelectedTemplateName(""); }}
           onSignOut={() => signOut()}
           onPagesChange={fetchPages}
           onTagsChange={fetchTags}
@@ -241,6 +245,12 @@ export default function MainApp({ user, isAdmin }: Props) {
                 <>
                   <span className="text-theme-400 text-sm mr-2">タグ</span>
                   <span className="tag-inline">{selectedTagName}</span>
+                </>
+              )}
+              {viewMode === "templates" && (
+                <>
+                  <span className="text-theme-400 text-sm mr-2">テンプレート</span>
+                  {selectedTemplateName || "一覧"}
                 </>
               )}
               {viewMode === "actions" && (
@@ -297,7 +307,19 @@ export default function MainApp({ user, isAdmin }: Props) {
 
         <main className="flex-1 flex overflow-hidden">
           <div className="flex-1 overflow-auto p-4">
-            {viewMode === "actions" ? (
+            {viewMode === "templates" ? (
+              <TemplateEditor
+                selectedTemplateId={selectedTemplateId}
+                selectedTemplateName={selectedTemplateName}
+                onSelectTemplate={(id, name) => { setSelectedTemplateId(id); setSelectedTemplateName(name); }}
+                onBack={() => { setSelectedTemplateId(null); setSelectedTemplateName(""); }}
+                allPages={pages}
+                allTags={tags}
+                onPageClick={handleSelectPage}
+                onTagClick={handleSelectTag}
+                onDateClick={handleSelectDate}
+              />
+            ) : viewMode === "actions" ? (
               <ActionList
                 allPages={pages}
                 allTags={tags}
