@@ -29,24 +29,32 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          command_timeout: 10m
+          command_timeout: 15m
           script: |
             set -e
             cd /var/www/histmd.saltybullet.com
 
-            # Stop service before updating
+            # Stop service to free memory
             sudo systemctl stop histmd
 
-            # Pull and install
+            # Pull latest
             git pull origin main
-            npm ci
 
-            # Build
-            npx next build
+            # Use npm install (not ci) to avoid full reinstall on low-memory server
+            npm install --prefer-offline 2>&1 | tail -5
+
+            # Build with limited memory
+            NODE_OPTIONS="--max-old-space-size=512" npx next build
 
             # Start service
             sudo systemctl start histmd
             sleep 3
 
             # Health check
-            curl -s -o /dev/null -w 'HTTP %{http_code}' http://127.0.0.1:3101/ | grep -q '200' && echo 'Deploy successful!' || echo 'Deploy might have failed'
+            HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3101/)
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Deploy successful!"
+            else
+              echo "Deploy failed with HTTP $HTTP_CODE"
+              exit 1
+            fi
