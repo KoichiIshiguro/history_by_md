@@ -265,8 +265,9 @@ export default function BlockEditor({
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
   const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const textareaRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
+  const inputRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
+  const shiftHeldRef = useRef(false);
 
   const fetchBlocks = useCallback(async () => {
     setLoading(true);
@@ -355,7 +356,7 @@ export default function BlockEditor({
       const newBlock: Block = { id: crypto.randomUUID(), content: "", indent_level: 0, sort_order: 0, date: viewMode === "page" ? "" : selectedDate };
       setBlocks([newBlock]); clearSelection();
       setEditingBlockId(newBlock.id); setEditContent("");
-      setTimeout(() => { textareaRefs.current.get(newBlock.id)?.focus(); }, 0);
+      setTimeout(() => { inputRefs.current.get(newBlock.id)?.focus(); }, 0);
       debouncedSave([newBlock]); return;
     }
     const reordered = remaining.map((b, i) => ({ ...b, sort_order: i }));
@@ -386,8 +387,8 @@ export default function BlockEditor({
     if (!e.shiftKey) { clearSelection(); setSelectionAnchor(blockIndex); }
   }, [editingBlockId, blocks, selectionAnchor, selectRange, clearSelection]);
 
-  const setTextareaRef = (id: string, el: HTMLTextAreaElement | null) => {
-    if (el) textareaRefs.current.set(id, el); else textareaRefs.current.delete(id);
+  const setInputRef = (id: string, el: HTMLTextAreaElement | null) => {
+    if (el) inputRefs.current.set(id, el); else inputRefs.current.delete(id);
   };
 
   const focusBlock = (blockId: string, cursorPos?: number) => {
@@ -395,7 +396,7 @@ export default function BlockEditor({
     const block = blocks.find((b) => b.id === blockId);
     if (block) setEditContent(block.content);
     setTimeout(() => {
-      const el = textareaRefs.current.get(blockId);
+      const el = inputRefs.current.get(blockId);
       if (el) { el.focus(); if (cursorPos !== undefined) el.selectionStart = el.selectionEnd = cursorPos; }
     }, 0);
   };
@@ -403,7 +404,7 @@ export default function BlockEditor({
   const startEditing = (block: Block) => {
     if (selectedBlockIds.size > 0) return;
     setEditingBlockId(block.id); setEditContent(block.content); setShowSuggestions(false);
-    setTimeout(() => { textareaRefs.current.get(block.id)?.focus(); }, 0);
+    setTimeout(() => { inputRefs.current.get(block.id)?.focus(); }, 0);
   };
 
   const finishEditing = () => {
@@ -422,6 +423,10 @@ export default function BlockEditor({
   };
 
   const handleContentChange = (value: string) => {
+    // Strip newlines unless Shift is held (Shift+Enter = intentional newline)
+    if (!shiftHeldRef.current) {
+      value = value.replace(/\n/g, "");
+    }
     setEditContent(value);
     const pageMatch = value.match(/\{\{([^}]*)$/);
     if (pageMatch) {
@@ -452,6 +457,7 @@ export default function BlockEditor({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>, block: Block, blockIndex: number) => {
+    if (e.key === "Shift") shiftHeldRef.current = true;
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
 
     if (showSuggestions) {
@@ -462,7 +468,7 @@ export default function BlockEditor({
     }
 
     const textarea = e.currentTarget;
-    const cursorPos = textarea.selectionStart;
+    const cursorPos = textarea.selectionStart ?? 0;
     const meta = e.metaKey || e.ctrlKey;
 
     if (meta && e.key === "a") {
@@ -470,7 +476,7 @@ export default function BlockEditor({
       setSelectedBlockIds(new Set(blocks.map((b) => b.id))); setSelectionAnchor(0); return;
     }
 
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter") {
       e.preventDefault();
       const before = editContent.slice(0, cursorPos);
       const after = editContent.slice(cursorPos);
@@ -479,7 +485,7 @@ export default function BlockEditor({
       updated.splice(blockIndex + 1, 0, newBlock);
       const reordered = updated.map((b, i) => ({ ...b, sort_order: i }));
       setBlocks(reordered); setEditContent(after); setEditingBlockId(newBlock.id);
-      setTimeout(() => { const el = textareaRefs.current.get(newBlock.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = 0; } }, 0);
+      setTimeout(() => { const el = inputRefs.current.get(newBlock.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = 0; } }, 0);
       debouncedSave(reordered);
     } else if (e.key === "Tab") {
       e.preventDefault();
@@ -498,7 +504,7 @@ export default function BlockEditor({
     } else if (e.key === "ArrowRight" && cursorPos === editContent.length && blockIndex < blocks.length - 1) {
       e.preventDefault(); const next = blocks[blockIndex + 1];
       setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(next.id, 0);
-    } else if (e.key === "Backspace" && cursorPos === 0 && textarea.selectionEnd === 0 && blockIndex > 0) {
+    } else if (e.key === "Backspace" && cursorPos === 0 && (textarea.selectionEnd ?? 0) === 0 && blockIndex > 0) {
       e.preventDefault();
       const prev = blocks[blockIndex - 1];
       const merged = prev.content + editContent;
@@ -506,7 +512,7 @@ export default function BlockEditor({
       const updated = blocks.map((b) => b.id === prev.id ? { ...b, content: merged } : b).filter((b) => b.id !== block.id);
       const reordered = updated.map((b, i) => ({ ...b, sort_order: i }));
       setBlocks(reordered); setEditContent(merged); setEditingBlockId(prev.id);
-      setTimeout(() => { const el = textareaRefs.current.get(prev.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = cursorAt; } }, 0);
+      setTimeout(() => { const el = inputRefs.current.get(prev.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = cursorAt; } }, 0);
       debouncedSave(reordered);
     }
   };
@@ -566,7 +572,7 @@ export default function BlockEditor({
     editContent, showSuggestions: showSuggestions && editingBlockId === block.id,
     suggestions, selectedSuggestion,
     allPages, allTags,
-    setTextareaRef, onStartEditing: startEditing,
+    setInputRef, onStartEditing: startEditing,
     onEditContentChange: handleContentChange, onFinishEditing: finishEditing,
     onKeyDown: isRef ? ((e: KeyboardEvent<HTMLTextAreaElement>, b: Block, _i: number) => handleRefKeyDown(e, b)) : handleKeyDown,
     onPageClick, onTagClick, onDateClick, onApplySuggestion: applySuggestion,
@@ -574,7 +580,9 @@ export default function BlockEditor({
   });
 
   return (
-    <div ref={containerRef} className="mx-auto max-w-3xl outline-none" tabIndex={-1} onKeyDown={handleContainerKeyDown}>
+    <div ref={containerRef} className="mx-auto max-w-3xl outline-none" tabIndex={-1}
+      onKeyDown={(e) => { if (e.key === "Shift") shiftHeldRef.current = true; handleContainerKeyDown(e); }}
+      onKeyUp={(e) => { if (e.key === "Shift") shiftHeldRef.current = false; }}>
       {viewMode === "page" ? (
         <>
           {/* 1. Page content */}
@@ -650,7 +658,7 @@ export default function BlockEditor({
 }
 
 function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, showSuggestions,
-  suggestions, selectedSuggestion, allPages, allTags, setTextareaRef, onStartEditing,
+  suggestions, selectedSuggestion, allPages, allTags, setInputRef, onStartEditing,
   onEditContentChange, onFinishEditing, onKeyDown, onPageClick, onTagClick, onDateClick,
   onApplySuggestion, onBlockMouseDown,
 }: {
@@ -658,7 +666,7 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
   editContent: string; showSuggestions: boolean;
   suggestions: { type: "tag" | "page"; items: { id: string; name: string }[] };
   selectedSuggestion: number; allPages: PageInfo[]; allTags: TagInfo[];
-  setTextareaRef: (id: string, el: HTMLTextAreaElement | null) => void;
+  setInputRef: (id: string, el: HTMLTextAreaElement | null) => void;
   onStartEditing: (block: Block) => void; onEditContentChange: (c: string) => void;
   onFinishEditing: () => void;
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>, block: Block, blockIndex: number) => void;
@@ -676,7 +684,7 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
       onMouseDown={(e) => onBlockMouseDown(e, blockIndex)}>
       {isEditing ? (
         <div className="relative flex-1">
-          <textarea ref={(el) => setTextareaRef(block.id, el)}
+          <textarea ref={(el) => setInputRef(block.id, el)}
             value={editContent} onChange={(e) => onEditContentChange(e.target.value)}
             onBlur={() => setTimeout(onFinishEditing, 150)}
             onKeyDown={(e) => onKeyDown(e, block, blockIndex)}
