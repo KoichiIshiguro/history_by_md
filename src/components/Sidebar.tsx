@@ -15,6 +15,12 @@ interface Tag {
   block_count: number;
 }
 
+interface Template {
+  id: string;
+  name: string;
+  content: string;
+}
+
 interface Props {
   user: { name?: string | null; email?: string | null; image?: string | null };
   isAdmin: boolean;
@@ -102,6 +108,11 @@ export default function Sidebar({
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [currentTheme, setCurrentTheme] = useState('orange');
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [addingTemplate, setAddingTemplate] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
+  const [templateName, setTemplateName] = useState("");
+  const [templateContent, setTemplateContent] = useState("");
 
   useEffect(() => {
     try {
@@ -109,6 +120,37 @@ export default function Sidebar({
       if (saved && THEME_PRESETS[saved]) { setCurrentTheme(saved); }
     } catch {}
   }, []);
+
+  const fetchTemplates = () => {
+    fetch("/api/templates").then((r) => r.ok ? r.json() : []).then(setTemplates).catch(() => {});
+  };
+  useEffect(() => { fetchTemplates(); }, []);
+
+  const saveTemplate = async () => {
+    if (!templateName.trim()) return;
+    if (editingTemplate) {
+      const res = await fetch("/api/templates", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: editingTemplate.id, name: templateName.trim(), content: templateContent }),
+      });
+      if (res.ok) { fetchTemplates(); setEditingTemplate(null); }
+    } else {
+      const res = await fetch("/api/templates", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: templateName.trim(), content: templateContent }),
+      });
+      if (res.ok) { fetchTemplates(); setAddingTemplate(false); }
+    }
+    setTemplateName(""); setTemplateContent("");
+  };
+
+  const deleteTemplate = async (id: string) => {
+    await fetch("/api/templates", {
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    fetchTemplates();
+  };
 
   const pageTree = buildPageTree(pages);
   const filteredTags = tagSearch
@@ -244,6 +286,50 @@ export default function Sidebar({
           </button>
         </div>
 
+        {/* Templates */}
+        <div className="p-2">
+          <div className="mb-1 flex items-center justify-between px-2">
+            <button onClick={() => toggleSection("templates")} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600">
+              <svg className={`h-3 w-3 transition-transform ${collapsedSections.has("templates") ? "" : "rotate-90"}`} fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+              </svg>
+              テンプレート
+            </button>
+            <button onClick={() => { setAddingTemplate(!addingTemplate); setEditingTemplate(null); setTemplateName(""); setTemplateContent(""); }}
+              className="text-gray-400 hover:text-gray-600" title="新しいテンプレート">
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+          </div>
+          {!collapsedSections.has("templates") && (
+            <>
+              {templates.length === 0 && !addingTemplate && (
+                <p className="px-3 py-2 text-xs text-gray-400">テンプレートなし</p>
+              )}
+              {templates.map((t) => (
+                <div key={t.id} className="group/tpl flex items-center rounded py-1 px-3 text-sm text-gray-600 hover:bg-gray-100">
+                  <button
+                    onClick={() => { setEditingTemplate(t); setAddingTemplate(false); setTemplateName(t.name); setTemplateContent(t.content); }}
+                    className="flex-1 text-left truncate flex items-center gap-1.5"
+                  >
+                    <svg className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+                    </svg>
+                    {t.name}
+                  </button>
+                  <button onClick={() => deleteTemplate(t.id)}
+                    className="hidden h-5 w-5 items-center justify-center rounded text-gray-400 hover:bg-red-50 hover:text-red-500 group-hover/tpl:flex" title="削除">
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+
         {/* 1. Pages */}
         <div className="p-2">
           <div className="mb-1 flex items-center justify-between px-2">
@@ -355,6 +441,39 @@ export default function Sidebar({
           )}
         </div>
       </div>
+
+      {/* Template add/edit modal */}
+      {(addingTemplate || editingTemplate) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setAddingTemplate(false); setEditingTemplate(null); }} />
+          <div className="relative mx-4 w-full max-w-sm animate-modal-in rounded-xl bg-white p-5 shadow-2xl">
+            <h3 className="mb-3 text-sm font-semibold text-gray-900">
+              {editingTemplate ? "テンプレート編集" : "新しいテンプレート"}
+            </h3>
+            <input
+              type="text"
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder="テンプレート名..."
+              className="mb-2 w-full rounded border border-gray-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-theme-300 focus:ring-1 focus:ring-theme-400"
+              autoFocus
+            />
+            <textarea
+              value={templateContent}
+              onChange={(e) => setTemplateContent(e.target.value)}
+              placeholder="テンプレート内容...&#10;(複数行可、先頭スペースでインデント)"
+              className="mb-3 w-full rounded border border-gray-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-theme-300 focus:ring-1 focus:ring-theme-400 min-h-[120px] resize-y font-mono"
+              rows={6}
+            />
+            <div className="flex gap-2">
+              <button onClick={() => { setAddingTemplate(false); setEditingTemplate(null); setTemplateName(""); setTemplateContent(""); }}
+                className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50">キャンセル</button>
+              <button onClick={saveTemplate}
+                className="flex-1 rounded-lg bg-theme-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-theme-600">保存</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete modal */}
       {deleteTarget && (

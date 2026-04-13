@@ -90,6 +90,18 @@ function initDb(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_pages_user ON pages(user_id);
     CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_id);
     CREATE INDEX IF NOT EXISTS idx_block_pages_page ON block_pages(page_id);
+
+    CREATE TABLE IF NOT EXISTS templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      content TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(name, user_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_templates_user ON templates(user_id);
   `);
 
   // Migration: add page_id to blocks (for page-owned content blocks)

@@ -43,6 +43,7 @@ interface Block {
 
 export interface PageInfo { id: string; name: string; parent_id?: string | null; ref_count?: number; full_path?: string; }
 export interface TagInfo { id: string; name: string; block_count?: number; }
+export interface Template { id: string; name: string; content: string; }
 
 interface Props {
   viewMode: "date" | "page" | "tag" | "admin" | "actions";
@@ -264,7 +265,7 @@ export default function BlockEditor({
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [loading, setLoading] = useState(false);
-  const [suggestions, setSuggestions] = useState<{ type: "tag" | "page"; items: { id: string; name: string }[] }>({ type: "tag", items: [] });
+  const [suggestions, setSuggestions] = useState<{ type: "tag" | "page" | "template"; items: { id: string; name: string; content?: string }[] }>({ type: "tag", items: [] });
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
@@ -277,6 +278,13 @@ export default function BlockEditor({
   const inputRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const shiftHeldRef = useRef(false);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const undoStackRef = useRef<Block[][]>([]);
+  const redoStackRef = useRef<Block[][]>([]);
+
+  useEffect(() => {
+    fetch("/api/templates").then((r) => r.ok ? r.json() : []).then(setTemplates).catch(() => {});
+  }, []);
 
   const fetchBlocks = useCallback(async () => {
     setLoading(true);
@@ -349,6 +357,34 @@ export default function BlockEditor({
     }, 800);
   }, [onDataChange]);
 
+  const pushUndo = useCallback(() => {
+    undoStackRef.current.push(blocks.map((b) => ({ ...b })));
+    if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+    redoStackRef.current = [];
+  }, [blocks]);
+
+  const undo = useCallback(() => {
+    if (undoStackRef.current.length === 0) return;
+    const snapshot = undoStackRef.current.pop()!;
+    redoStackRef.current.push(blocks.map((b) => ({ ...b })));
+    if (redoStackRef.current.length > 50) redoStackRef.current.shift();
+    setBlocks(snapshot);
+    setEditingBlockId(null);
+    setShowSuggestions(false);
+    debouncedSave(snapshot);
+  }, [blocks, debouncedSave]);
+
+  const redo = useCallback(() => {
+    if (redoStackRef.current.length === 0) return;
+    const snapshot = redoStackRef.current.pop()!;
+    undoStackRef.current.push(blocks.map((b) => ({ ...b })));
+    if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+    setBlocks(snapshot);
+    setEditingBlockId(null);
+    setShowSuggestions(false);
+    debouncedSave(snapshot);
+  }, [blocks, debouncedSave]);
+
   const clearSelection = useCallback(() => { setSelectedBlockIds(new Set()); setSelectionAnchor(null); }, []);
 
   const selectRange = useCallback((from: number, to: number) => {
@@ -360,6 +396,7 @@ export default function BlockEditor({
 
   const deleteSelectedBlocks = useCallback(() => {
     if (selectedBlockIds.size === 0) return;
+    pushUndo();
     const remaining = blocks.filter((b) => !selectedBlockIds.has(b.id));
     if (remaining.length === 0) {
       const newBlock: Block = { id: crypto.randomUUID(), content: "", indent_level: 0, sort_order: 0, date: viewMode === "page" ? "" : selectedDate };
@@ -370,7 +407,7 @@ export default function BlockEditor({
     }
     const reordered = remaining.map((b, i) => ({ ...b, sort_order: i }));
     setBlocks(reordered); clearSelection(); debouncedSave(reordered);
-  }, [blocks, selectedBlockIds, selectedDate, viewMode, clearSelection, debouncedSave]);
+  }, [blocks, selectedBlockIds, selectedDate, viewMode, clearSelection, debouncedSave, pushUndo]);
 
   const copySelectedBlocks = useCallback(async (cut: boolean) => {
     if (selectedBlockIds.size === 0) return;
@@ -380,15 +417,44 @@ export default function BlockEditor({
   }, [blocks, selectedBlockIds, deleteSelectedBlocks]);
 
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    const meta = e.metaKey || e.ctrlKey;
+    // Undo/redo works regardless of editing state
+    if (meta && e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (meta && e.key === "z" && e.shiftKey) { e.preventDefault(); redo(); return; }
     if (editingBlockId) return;
     if (selectedBlockIds.size === 0) return;
-    const meta = e.metaKey || e.ctrlKey;
     if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); deleteSelectedBlocks(); return; }
     if (meta && e.key === "c") { e.preventDefault(); copySelectedBlocks(false); return; }
     if (meta && e.key === "x") { e.preventDefault(); copySelectedBlocks(true); return; }
+    if (meta && e.key === "v") {
+      // Paste when blocks are selected (not editing) — replace selection with pasted lines
+      e.preventDefault();
+      navigator.clipboard.readText().then((text) => {
+        if (!text) return;
+        pushUndo();
+        const lines = text.split("\n");
+        const firstSelectedIdx = blocks.findIndex((b) => selectedBlockIds.has(b.id));
+        const remaining = blocks.filter((b) => !selectedBlockIds.has(b.id));
+        const insertAt = firstSelectedIdx >= 0 ? firstSelectedIdx : remaining.length;
+        const baseDate = viewMode === "page" ? "" : selectedDate;
+        const newBlocks: Block[] = lines.map((line, i) => {
+          const spaces = line.match(/^( *)/)?.[1]?.length || 0;
+          return { id: crypto.randomUUID(), content: line.trimStart(), indent_level: Math.floor(spaces / 2), sort_order: 0, date: baseDate };
+        });
+        remaining.splice(insertAt, 0, ...newBlocks);
+        const reordered = remaining.map((b, i) => ({ ...b, sort_order: i }));
+        setBlocks(reordered); clearSelection(); debouncedSave(reordered);
+        if (newBlocks.length > 0) {
+          const lastNew = newBlocks[newBlocks.length - 1];
+          setEditingBlockId(lastNew.id); setEditContent(lastNew.content);
+          setTimeout(() => { const el = inputRefs.current.get(lastNew.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = lastNew.content.length; } }, 0);
+        }
+      }).catch(() => {});
+      return;
+    }
     if (meta && e.key === "a") { e.preventDefault(); setSelectedBlockIds(new Set(blocks.map((b) => b.id))); setSelectionAnchor(0); return; }
     if (e.key === "Escape") { clearSelection(); return; }
-  }, [editingBlockId, selectedBlockIds, blocks, deleteSelectedBlocks, copySelectedBlocks, clearSelection]);
+  }, [editingBlockId, selectedBlockIds, blocks, deleteSelectedBlocks, copySelectedBlocks, clearSelection, undo, redo, pushUndo, viewMode, selectedDate, debouncedSave]);
 
   const handleBlockMouseDown = useCallback((e: React.MouseEvent, blockIndex: number) => {
     if (editingBlockId === blocks[blockIndex]?.id) return;
@@ -413,6 +479,8 @@ export default function BlockEditor({
   const startEditing = (block: Block) => {
     if (selectedBlockIds.size > 0) return;
     if (blurTimeoutRef.current) { clearTimeout(blurTimeoutRef.current); blurTimeoutRef.current = null; }
+    // Push undo snapshot when starting to edit a new block
+    if (!editingBlockId || editingBlockId !== block.id) pushUndo();
     // Save current editing block before switching
     if (editingBlockId && editingBlockId !== block.id) {
       const refBlock = [...pageRefs, ...dateRefs].find((b) => b.id === editingBlockId);
@@ -482,10 +550,58 @@ export default function BlockEditor({
       setSuggestions({ type: "tag", items }); setShowSuggestions(items.length > 0); setSelectedSuggestion(0);
       return;
     }
+    const templateMatch = value.match(/^!(?:template|t)\s*(.*)$/i);
+    if (templateMatch) {
+      const q = templateMatch[1].toLowerCase();
+      const items = templates
+        .filter((t) => t.name.toLowerCase().includes(q))
+        .map((t) => ({ id: t.id, name: t.name, content: t.content }))
+        .slice(0, 8);
+      setSuggestions({ type: "template", items });
+      setShowSuggestions(items.length > 0);
+      setSelectedSuggestion(0);
+      return;
+    }
     setShowSuggestions(false);
   };
 
   const applySuggestion = (name: string) => {
+    if (suggestions.type === "template") {
+      const template = suggestions.items.find((t) => t.name === name);
+      if (!template?.content) { setShowSuggestions(false); return; }
+      pushUndo();
+      const lines = template.content.split("\n");
+      if (!editingBlockId) { setShowSuggestions(false); return; }
+      const blockIndex = blocks.findIndex((b) => b.id === editingBlockId);
+      if (blockIndex === -1) { setShowSuggestions(false); return; }
+      const block = blocks[blockIndex];
+      // First line replaces current block content
+      const firstLine = lines[0];
+      const leadingSpaces = firstLine.match(/^( *)/)?.[1]?.length || 0;
+      const firstContent = firstLine.trimStart();
+      const firstIndent = block.indent_level + Math.floor(leadingSpaces / 2);
+      const updated = blocks.map((b) => b.id === block.id ? { ...b, content: firstContent, indent_level: firstIndent } : b);
+      // Remaining lines become new blocks
+      const newBlocks: Block[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        const spaces = line.match(/^( *)/)?.[1]?.length || 0;
+        newBlocks.push({
+          id: crypto.randomUUID(),
+          content: line.trimStart(),
+          indent_level: block.indent_level + Math.floor(spaces / 2),
+          sort_order: 0,
+          date: block.date,
+        });
+      }
+      if (newBlocks.length > 0) updated.splice(blockIndex + 1, 0, ...newBlocks);
+      const reordered = updated.map((b, i) => ({ ...b, sort_order: i }));
+      setBlocks(reordered);
+      setEditContent(firstContent);
+      setShowSuggestions(false);
+      debouncedSave(reordered);
+      return;
+    }
     if (suggestions.type === "page") {
       const newContent = editContent.replace(/\{\{([^}]*)$/, `{{${name}}} `);
       setEditContent(newContent);
@@ -495,6 +611,59 @@ export default function BlockEditor({
     }
     setShowSuggestions(false);
   };
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>, block: Block, blockIndex: number) => {
+    const text = e.clipboardData.getData("text/plain");
+    if (!text || !text.includes("\n")) return; // single line paste is handled natively
+    e.preventDefault();
+    pushUndo();
+    const textarea = e.currentTarget;
+    const cursorPos = textarea.selectionStart ?? 0;
+    const selEnd = textarea.selectionEnd ?? cursorPos;
+    const before = editContent.slice(0, cursorPos);
+    const after = editContent.slice(selEnd);
+    const lines = text.split("\n");
+    // First line merges with content before cursor
+    const firstContent = before + lines[0];
+    // Last line merges with content after cursor
+    const lastLineContent = lines[lines.length - 1] + after;
+
+    if (lines.length === 1) {
+      // Shouldn't reach here but just in case
+      const newContent = firstContent + after;
+      setEditContent(newContent);
+      const updated = blocks.map((b) => b.id === block.id ? { ...b, content: newContent } : b);
+      setBlocks(updated); debouncedSave(updated);
+      return;
+    }
+
+    // Update current block with first line
+    const updated = blocks.map((b) => b.id === block.id ? { ...b, content: firstContent } : b);
+
+    // Create new blocks for middle + last lines
+    const newBlocks: Block[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const content = i === lines.length - 1 ? lastLineContent : lines[i];
+      newBlocks.push({
+        id: crypto.randomUUID(),
+        content,
+        indent_level: block.indent_level,
+        sort_order: 0,
+        date: block.date,
+      });
+    }
+    updated.splice(blockIndex + 1, 0, ...newBlocks);
+    const reordered = updated.map((b, i) => ({ ...b, sort_order: i }));
+    setBlocks(reordered);
+
+    // Focus last new block at end of pasted content (before the "after" text)
+    const lastBlock = newBlocks[newBlocks.length - 1];
+    const cursorAt = (lines[lines.length - 1]).length;
+    setEditingBlockId(lastBlock.id);
+    setEditContent(lastBlock.content);
+    setTimeout(() => { const el = inputRefs.current.get(lastBlock.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = cursorAt; } }, 0);
+    debouncedSave(reordered);
+  }, [blocks, editContent, pushUndo, debouncedSave]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>, block: Block, blockIndex: number) => {
     if (e.key === "Shift") shiftHeldRef.current = true;
@@ -525,6 +694,7 @@ export default function BlockEditor({
         return;
       }
       e.preventDefault();
+      pushUndo();
       const before = editContent.slice(0, cursorPos);
       const after = editContent.slice(cursorPos);
       const updated = blocks.map((b) => b.id === block.id ? { ...b, content: before } : b);
@@ -536,6 +706,7 @@ export default function BlockEditor({
       debouncedSave(reordered);
     } else if (e.key === "Tab") {
       e.preventDefault();
+      pushUndo();
       const newIndent = e.shiftKey ? Math.max(0, block.indent_level - 1) : block.indent_level + 1;
       const updated = blocks.map((b) => b.id === block.id ? { ...b, indent_level: newIndent, content: editContent } : b);
       setBlocks(updated); debouncedSave(updated);
@@ -553,6 +724,7 @@ export default function BlockEditor({
       setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(next.id, 0);
     } else if (e.key === "Backspace" && cursorPos === 0 && (textarea.selectionEnd ?? 0) === 0 && blockIndex > 0) {
       e.preventDefault();
+      pushUndo();
       const prev = blocks[blockIndex - 1];
       const merged = prev.content + editContent;
       const cursorAt = prev.content.length;
@@ -650,6 +822,7 @@ export default function BlockEditor({
   };
 
   const addNewBlock = () => {
+    pushUndo();
     const newBlock: Block = { id: crypto.randomUUID(), content: "", indent_level: 0, sort_order: blocks.length, date: viewMode === "page" ? "" : selectedDate };
     const updated = [...blocks, newBlock];
     setBlocks(updated); startEditing(newBlock); debouncedSave(updated);
@@ -690,6 +863,7 @@ export default function BlockEditor({
     onEditContentChange: handleContentChange,
     onFinishEditing: () => { blurTimeoutRef.current = setTimeout(finishEditing, 150); },
     onKeyDown: isRef ? ((e: KeyboardEvent<HTMLTextAreaElement>, b: Block, _i: number) => handleRefKeyDown(e, b)) : handleKeyDown,
+    onPaste: isRef ? undefined : handlePaste,
     onPageClick, onTagClick, onDateClick, onApplySuggestion: applySuggestion,
     onBlockMouseDown: isRef ? (() => {}) : handleBlockMouseDown,
   });
@@ -852,17 +1026,18 @@ export default function BlockEditor({
 
 function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, showSuggestions,
   suggestions, selectedSuggestion, allPages, allTags, setInputRef, onStartEditing,
-  onEditContentChange, onFinishEditing, onKeyDown, onPageClick, onTagClick, onDateClick,
+  onEditContentChange, onFinishEditing, onKeyDown, onPaste, onPageClick, onTagClick, onDateClick,
   onApplySuggestion, onBlockMouseDown,
 }: {
   block: Block; blockIndex: number; isEditing: boolean; isSelected: boolean;
   editContent: string; showSuggestions: boolean;
-  suggestions: { type: "tag" | "page"; items: { id: string; name: string }[] };
+  suggestions: { type: "tag" | "page" | "template"; items: { id: string; name: string; content?: string }[] };
   selectedSuggestion: number; allPages: PageInfo[]; allTags: TagInfo[];
   setInputRef: (id: string, el: HTMLTextAreaElement | null) => void;
   onStartEditing: (block: Block) => void; onEditContentChange: (c: string) => void;
   onFinishEditing: () => void;
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>, block: Block, blockIndex: number) => void;
+  onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>, block: Block, blockIndex: number) => void;
   onPageClick: (id: string, name: string) => void;
   onTagClick: (id: string, name: string) => void;
   onDateClick: (date: string) => void;
@@ -888,6 +1063,7 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
             value={editContent} onChange={(e) => onEditContentChange(e.target.value)}
             onBlur={onFinishEditing}
             onKeyDown={(e) => onKeyDown(e, block, blockIndex)}
+            onPaste={onPaste ? (e) => onPaste(e, block, blockIndex) : undefined}
             className="block-line w-full resize-none border-none bg-blue-50 p-1 text-sm outline-none rounded leading-snug"
             rows={Math.max(1, editContent.split("\n").length)} autoFocus />
           {showSuggestions && (
@@ -898,6 +1074,13 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
                   onMouseDown={(e) => { e.preventDefault(); onApplySuggestion(item.name); }}>
                   {suggestions.type === "page" ? (
                     <span className="page-link text-xs">{item.name}</span>
+                  ) : suggestions.type === "template" ? (
+                    <span className="flex items-center gap-1.5 text-xs">
+                      <svg className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+                      </svg>
+                      {item.name}
+                    </span>
                   ) : (
                     <span className="tag-inline text-xs">{item.name}</span>
                   )}
