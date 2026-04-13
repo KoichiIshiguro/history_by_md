@@ -23,36 +23,52 @@ jobs:
       - name: Build
         run: npx next build
 
-      - name: Deploy to server
+      - name: Create deploy package
+        run: |
+          tar czf deploy.tar.gz \
+            .next \
+            package.json \
+            package-lock.json \
+            src \
+            public \
+            next.config.ts \
+            tsconfig.json \
+            .env.local 2>/dev/null || true
+
+      - name: Copy to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "deploy.tar.gz"
+          target: "/tmp"
+
+      - name: Deploy on server
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          command_timeout: 15m
+          command_timeout: 5m
           script: |
             set -e
             cd /var/www/histmd.saltybullet.com
 
-            # Stop services to free memory for build
+            # Stop service
             sudo systemctl stop histmd
-            pkill -f "next build" || true
 
-            # Note: invoice.saltybullet.com also runs next-server - do NOT pkill next-server
+            # Extract pre-built package
+            rm -rf .next
+            tar xzf /tmp/deploy.tar.gz
+            rm -f /tmp/deploy.tar.gz
 
-            # Pull latest
-            cd /var/www/histmd.saltybullet.com
-            git pull origin main
-
-            # Install dependencies
-            npm install --prefer-offline 2>&1 | tail -5
+            # Install production dependencies only (no build needed)
+            npm install --prefer-offline --omit=dev 2>&1 | tail -5
             npm rebuild better-sqlite3
 
-            # Clean previous build
-            rm -rf .next
-
-            # Build (server ~960MB RAM, ~600MB free after stopping services)
-            NODE_OPTIONS="--max-old-space-size=512" npx next build
+            # Sync source files from git (for anything not in tar)
+            git pull origin main 2>/dev/null || true
 
             # Start service
             sudo systemctl start histmd
