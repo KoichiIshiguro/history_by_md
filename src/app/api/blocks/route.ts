@@ -249,4 +249,7 @@ function recomputeLinksForDate(db: any, userId: string, date: string) {
     if (ownTags.length > 0) tagStack.push({ tags: ownTags, indent: block.indent_level });
     if (ownPages.length > 0) pageStack.push({ pages: ownPages, indent: block.indent_level });
   }
+
+  // Clean up orphaned tags
+  db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(userId);
 }

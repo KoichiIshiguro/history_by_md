@@ -133,6 +133,8 @@ export async function POST(request: NextRequest) {
           insertBlockPage.run(blockId, page.id);
         }
       }
+      // Clean up orphaned tags (no block references)
+      db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
     });
     saveTransaction();
     return Response.json({ ok: true });
@@ -167,6 +169,8 @@ export async function POST(request: NextRequest) {
         insertBlockPage.run(blockId, page.id);
       }
     }
+    // Clean up orphaned tags (no block references)
+    db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
   });
   saveTransaction();
   return Response.json({ ok: true });

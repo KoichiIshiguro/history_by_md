@@ -278,6 +278,7 @@ export default function BlockEditor({
   const inputRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const shiftHeldRef = useRef(false);
+  const skipMouseUpRef = useRef(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const undoStackRef = useRef<Block[][]>([]);
   const redoStackRef = useRef<Block[][]>([]);
@@ -457,10 +458,24 @@ export default function BlockEditor({
   }, [editingBlockId, selectedBlockIds, blocks, deleteSelectedBlocks, copySelectedBlocks, clearSelection, undo, redo, pushUndo, viewMode, selectedDate, debouncedSave]);
 
   const handleBlockMouseDown = useCallback((e: React.MouseEvent, blockIndex: number) => {
-    if (editingBlockId === blocks[blockIndex]?.id) return;
-    if (e.shiftKey && selectionAnchor !== null) { e.preventDefault(); selectRange(selectionAnchor, blockIndex); return; }
+    if (e.shiftKey && selectionAnchor !== null) {
+      e.preventDefault();
+      skipMouseUpRef.current = true;
+      // Exit editing mode — save current content first
+      if (editingBlockId) {
+        const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+        setBlocks(updated);
+        debouncedSave(updated);
+        setEditingBlockId(null);
+        setShowSuggestions(false);
+      }
+      selectRange(selectionAnchor, blockIndex);
+      // Focus container so Delete/Ctrl+C etc. work
+      setTimeout(() => containerRef.current?.focus(), 0);
+      return;
+    }
     if (!e.shiftKey) { clearSelection(); setSelectionAnchor(blockIndex); }
-  }, [editingBlockId, blocks, selectionAnchor, selectRange, clearSelection]);
+  }, [editingBlockId, editContent, blocks, selectionAnchor, selectRange, clearSelection, debouncedSave]);
 
   const setInputRef = (id: string, el: HTMLTextAreaElement | null) => {
     if (el) inputRefs.current.set(id, el); else inputRefs.current.delete(id);
@@ -866,6 +881,7 @@ export default function BlockEditor({
     onPaste: isRef ? undefined : handlePaste,
     onPageClick, onTagClick, onDateClick, onApplySuggestion: applySuggestion,
     onBlockMouseDown: isRef ? (() => {}) : handleBlockMouseDown,
+    skipMouseUpRef,
   });
 
   return (
@@ -1027,7 +1043,7 @@ export default function BlockEditor({
 function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, showSuggestions,
   suggestions, selectedSuggestion, allPages, allTags, setInputRef, onStartEditing,
   onEditContentChange, onFinishEditing, onKeyDown, onPaste, onPageClick, onTagClick, onDateClick,
-  onApplySuggestion, onBlockMouseDown,
+  onApplySuggestion, onBlockMouseDown, skipMouseUpRef,
 }: {
   block: Block; blockIndex: number; isEditing: boolean; isSelected: boolean;
   editContent: string; showSuggestions: boolean;
@@ -1043,6 +1059,7 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
   onDateClick: (date: string) => void;
   onApplySuggestion: (name: string) => void;
   onBlockMouseDown: (e: React.MouseEvent, blockIndex: number) => void;
+  skipMouseUpRef: React.MutableRefObject<boolean>;
 }) {
   const indent = block.indent_level * 24;
 
@@ -1051,6 +1068,8 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
       style={{ paddingLeft: `${indent}px` }}
       onMouseDown={(e) => onBlockMouseDown(e, blockIndex)}
       onMouseUp={(e) => {
+        // Skip mouseUp after shift+click selection
+        if (skipMouseUpRef.current) { skipMouseUpRef.current = false; return; }
         if (isEditing) return;
         // Don't enter edit mode if clicking on a link (page, tag, date)
         const target = e.target as HTMLElement;
