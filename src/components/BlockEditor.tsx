@@ -525,6 +525,7 @@ export default function BlockEditor({
   };
 
   const handleRefKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>, block: Block) => {
+    if (e.key === "Shift") shiftHeldRef.current = true;
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (showSuggestions) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSelectedSuggestion((p) => Math.min(p + 1, suggestions.items.length - 1)); return; }
@@ -539,6 +540,72 @@ export default function BlockEditor({
       setPageRefs(pageRefs.map((b) => b.id === block.id ? updated : b));
       setDateRefs(dateRefs.map((b) => b.id === block.id ? updated : b));
       debouncedRefSave(updated);
+    }
+    if (e.key === "Enter") {
+      const textarea = e.currentTarget;
+      const cursorPos = textarea.selectionStart ?? 0;
+      // Check unclosed code fence
+      const lines = editContent.slice(0, cursorPos).split("\n");
+      const openFences = lines.filter((l) => l.trimStart().startsWith("```")).length;
+      if (openFences % 2 === 1) return; // inside code block, allow newline
+
+      e.preventDefault();
+      const before = editContent.slice(0, cursorPos);
+      const after = editContent.slice(cursorPos);
+
+      // Update current block content
+      const updatedBlock = { ...block, content: before };
+
+      // Create new block in the same context (same date / page_id)
+      const newBlock: Block = {
+        id: crypto.randomUUID(),
+        content: after,
+        indent_level: block.indent_level,
+        sort_order: block.sort_order + 1,
+        date: block.date,
+        page_id: block.page_id,
+        source_page_name: block.source_page_name,
+        source_page_id: block.source_page_id,
+      };
+
+      // Insert into the correct ref list
+      const isPageRef = pageRefs.some((b) => b.id === block.id);
+      if (isPageRef) {
+        const idx = pageRefs.findIndex((b) => b.id === block.id);
+        const updated = [...pageRefs];
+        updated[idx] = updatedBlock;
+        updated.splice(idx + 1, 0, newBlock);
+        setPageRefs(updated);
+      } else {
+        const idx = dateRefs.findIndex((b) => b.id === block.id);
+        const updated = [...dateRefs];
+        updated[idx] = updatedBlock;
+        updated.splice(idx + 1, 0, newBlock);
+        setDateRefs(updated);
+      }
+
+      setEditContent(after);
+      setEditingBlockId(newBlock.id);
+      setTimeout(() => {
+        const el = inputRefs.current.get(newBlock.id);
+        if (el) { el.focus(); el.selectionStart = el.selectionEnd = 0; }
+      }, 0);
+
+      // Save both blocks
+      debouncedRefSave(updatedBlock);
+      // Save new block via POST to create it on server
+      fetch("/api/blocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: newBlock.id,
+          content: newBlock.content,
+          indent_level: newBlock.indent_level,
+          sort_order: newBlock.sort_order,
+          date: newBlock.date,
+          page_id: newBlock.page_id || null,
+        }),
+      }).then(() => onDataChange());
     }
   };
 

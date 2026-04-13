@@ -117,6 +117,29 @@ export async function PUT(request: NextRequest) {
   return Response.json({ ok: true });
 }
 
+export async function POST(request: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.email) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const user = session.user as any;
+  const db = getDb();
+  const body = await request.json();
+  const { id, content, indent_level, sort_order, date, page_id } = body;
+
+  db.prepare(
+    `INSERT INTO blocks (id, content, indent_level, sort_order, date, page_id, user_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+  ).run(id, content || "", indent_level || 0, sort_order || 0, date || "", page_id || null, user.id);
+
+  // Recompute links if it's a date block
+  if (!page_id && date) {
+    recomputeLinksForDate(db, user.id, date);
+  }
+
+  return Response.json({ ok: true });
+}
+
 export async function DELETE(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
