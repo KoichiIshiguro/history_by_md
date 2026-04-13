@@ -455,11 +455,23 @@ export default function BlockEditor({
     const pageMatch = value.match(/\{\{([^}]*)$/);
     if (pageMatch) {
       const q = pageMatch[1].toLowerCase();
-      // Search by full_path and name, show full_path in suggestions
-      const items = allPages
-        .filter((p) => (p.full_path || p.name).toLowerCase().includes(q) || p.name.toLowerCase().includes(q))
-        .map((p) => ({ id: p.id, name: p.full_path || p.name }))
-        .slice(0, 8);
+      // Match against full_path: each segment of the path is checked
+      // Score: 0 = name exact, 1 = name starts-with, 2 = name includes, 3 = any segment includes, 4 = full_path includes
+      const scored: { id: string; name: string; score: number }[] = [];
+      for (const p of allPages) {
+        const fp = (p.full_path || p.name).toLowerCase();
+        const nm = p.name.toLowerCase();
+        const segments = fp.split("/");
+        let score = -1;
+        if (nm === q) score = 0;
+        else if (nm.startsWith(q)) score = 1;
+        else if (nm.includes(q)) score = 2;
+        else if (segments.some((s) => s.includes(q))) score = 3;
+        else if (fp.includes(q)) score = 4;
+        if (score >= 0) scored.push({ id: p.id, name: p.full_path || p.name, score });
+      }
+      scored.sort((a, b) => a.score - b.score || a.name.localeCompare(b.name));
+      const items = scored.slice(0, 10);
       setSuggestions({ type: "page", items }); setShowSuggestions(items.length > 0); setSelectedSuggestion(0);
       return;
     }
@@ -879,7 +891,7 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
             className="block-line w-full resize-none border-none bg-blue-50 p-1 text-sm outline-none rounded leading-snug"
             rows={Math.max(1, editContent.split("\n").length)} autoFocus />
           {showSuggestions && (
-            <div className="absolute left-0 top-full z-10 mt-1 w-56 rounded border border-gray-200 bg-white shadow-lg">
+            <div className="absolute left-0 top-full z-10 mt-1 min-w-56 max-w-md rounded border border-gray-200 bg-white shadow-lg">
               {suggestions.items.map((item, i) => (
                 <button key={item.id}
                   className={`block w-full px-3 py-1.5 text-left text-sm ${i === selectedSuggestion ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-50"}`}
