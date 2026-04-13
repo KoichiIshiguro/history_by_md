@@ -25,10 +25,11 @@ body {
 
 /* Block editor styles */
 .block-line {
-  min-height: 1.5em;
+  min-height: 1.4em;
   outline: none;
   white-space: pre-wrap;
   word-break: break-word;
+  line-height: 1.5;
 }
 
 .block-line:focus {
@@ -85,7 +86,19 @@ body {
 }
 
 /* GFM Markdown styles */
-.block-content { line-height: 1.6; }
+.block-content { line-height: 1.5; }
+.block-content p,
+.block-content ul,
+.block-content ol,
+.block-content blockquote,
+.block-content pre,
+.block-content table,
+.block-content h1,
+.block-content h2,
+.block-content h3,
+.block-content h4 {
+  margin: 0;
+}
 
 .md-code {
   background: #f0f0f0;

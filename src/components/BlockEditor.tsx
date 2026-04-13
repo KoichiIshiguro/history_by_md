@@ -477,6 +477,13 @@ export default function BlockEditor({
     }
 
     if (e.key === "Enter") {
+      // Inside unclosed ``` code block: allow newline (like Shift+Enter)
+      const lines = editContent.slice(0, cursorPos).split("\n");
+      const openFences = lines.filter((l) => l.trimStart().startsWith("```")).length;
+      if (openFences % 2 === 1) {
+        // Inside a fenced code block — let newline through
+        return;
+      }
       e.preventDefault();
       const before = editContent.slice(0, cursorPos);
       const after = editContent.slice(cursorPos);
@@ -679,16 +686,17 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
   const indent = block.indent_level * 24;
 
   return (
-    <div className={`group relative flex items-start py-0.5 ${isSelected ? "bg-blue-100 rounded" : ""}`}
+    <div className={`group relative flex items-start ${isSelected ? "bg-blue-100 rounded" : ""} ${!isEditing ? "cursor-text hover:bg-gray-50 rounded" : ""}`}
       style={{ paddingLeft: `${indent}px` }}
-      onMouseDown={(e) => onBlockMouseDown(e, blockIndex)}>
+      onMouseDown={(e) => onBlockMouseDown(e, blockIndex)}
+      onClick={() => { if (!isEditing) onStartEditing(block); }}>
       {isEditing ? (
         <div className="relative flex-1">
           <textarea ref={(el) => setInputRef(block.id, el)}
             value={editContent} onChange={(e) => onEditContentChange(e.target.value)}
             onBlur={() => setTimeout(onFinishEditing, 150)}
             onKeyDown={(e) => onKeyDown(e, block, blockIndex)}
-            className="block-line w-full resize-none border-none bg-blue-50 p-1 text-sm outline-none rounded"
+            className="block-line w-full resize-none border-none bg-blue-50 p-1 text-sm outline-none rounded leading-snug"
             rows={Math.max(1, editContent.split("\n").length)} autoFocus />
           {showSuggestions && (
             <div className="absolute left-0 top-full z-10 mt-1 w-56 rounded border border-gray-200 bg-white shadow-lg">
@@ -707,8 +715,7 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
           )}
         </div>
       ) : (
-        <div onClick={() => onStartEditing(block)}
-          className="block-line block-content flex-1 cursor-text p-1 text-sm hover:bg-gray-50 rounded">
+        <div className="block-line block-content flex-1 p-1 text-sm">
           {block.content
             ? <MarkdownContent content={block.content} allPages={allPages} allTags={allTags}
                 onPageClick={onPageClick} onTagClick={onTagClick} onDateClick={onDateClick} />
