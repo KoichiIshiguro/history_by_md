@@ -34,25 +34,26 @@ jobs:
             set -e
             cd /var/www/histmd.saltybullet.com
 
-            # Stop service to free memory
+            # Stop services to free memory for build
             sudo systemctl stop histmd
-
-            # Kill any leftover next build processes
             pkill -f "next build" || true
-            rm -rf /var/www/histmd.saltybullet.com/.next/build-lock 2>/dev/null || true
+
+            # Kill stale next-server processes (orphaned from previous deploys)
+            pkill -f "next-server" || true
 
             # Pull latest
+            cd /var/www/histmd.saltybullet.com
             git pull origin main
 
-            # Use npm install (not ci) to avoid full reinstall on low-memory server
+            # Install dependencies
             npm install --prefer-offline 2>&1 | tail -5
             npm rebuild better-sqlite3
 
-            # Clean previous build to avoid lock issues
+            # Clean previous build
             rm -rf .next
 
-            # Build with limited memory (server has ~960MB RAM)
-            NODE_OPTIONS="--max-old-space-size=768" npx next build
+            # Build (server ~960MB RAM, ~600MB free after stopping services)
+            NODE_OPTIONS="--max-old-space-size=512" npx next build
 
             # Start service
             sudo systemctl start histmd
