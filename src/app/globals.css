@@ -83,3 +83,12 @@ body {
 .md-heading-1 { font-size: 1.5em; font-weight: bold; }
 .md-heading-2 { font-size: 1.3em; font-weight: bold; }
 .md-heading-3 { font-size: 1.1em; font-weight: bold; }
+
+/* Modal animation */
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.95) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-modal-in {
+  animation: modal-in 0.15s ease-out;
+}

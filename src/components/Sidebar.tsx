@@ -62,17 +62,23 @@ export default function Sidebar({
   const [newTagParent, setNewTagParent] = useState<string | null>(null);
   const [showTagForm, setShowTagForm] = useState(false);
   const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   const tagTree = buildTagTree(tags);
 
-  const deleteTag = async (tagId: string, tagName: string) => {
-    if (!confirm(`タグ「${tagName}」を削除しますか？`)) return;
+  const requestDeleteTag = (tagId: string, tagName: string) => {
+    setDeleteTarget({ id: tagId, name: tagName });
+  };
+
+  const confirmDeleteTag = async () => {
+    if (!deleteTarget) return;
     const res = await fetch("/api/tags", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: tagId }),
+      body: JSON.stringify({ id: deleteTarget.id }),
     });
     if (res.ok) onTagsChange();
+    setDeleteTarget(null);
   };
 
   const toggleExpand = (tagId: string) => {
@@ -236,7 +242,7 @@ export default function Sidebar({
               expandedTags={expandedTags}
               onToggleExpand={toggleExpand}
               onSelectTag={(id, name) => handleItemClick(() => onSelectTag(id, name))}
-              onDeleteTag={deleteTag}
+              onDeleteTag={requestDeleteTag}
             />
           ))}
         </div>
@@ -251,6 +257,46 @@ export default function Sidebar({
           ログアウト
         </button>
       </div>
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setDeleteTarget(null)}
+          />
+          <div className="relative mx-4 w-full max-w-xs animate-modal-in rounded-xl bg-white p-5 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-50">
+                <svg className="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">タグを削除</h3>
+                <p className="text-xs text-gray-500">この操作は取り消せません</p>
+              </div>
+            </div>
+            <p className="mb-5 text-sm text-gray-600">
+              <span className="tag-inline">{deleteTarget.name}</span> を削除しますか？
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={confirmDeleteTag}
+                className="flex-1 rounded-lg bg-red-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-600"
+              >
+                削除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
