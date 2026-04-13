@@ -11,6 +11,7 @@ type ViewMode = "date" | "tag" | "admin";
 interface Tag {
   id: string;
   name: string;
+  parent_id: string | null;
   block_count: number;
 }
 
@@ -28,14 +29,23 @@ export default function MainApp({ user, isAdmin }: Props) {
   const [selectedTagName, setSelectedTagName] = useState<string>("");
   const [tags, setTags] = useState<Tag[]>([]);
   const [dates, setDates] = useState<string[]>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) setSidebarOpen(true);
+    };
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   const fetchTags = useCallback(async () => {
     const res = await fetch("/api/tags");
-    if (res.ok) {
-      const data = await res.json();
-      setTags(data);
-    }
+    if (res.ok) setTags(await res.json());
   }, []);
 
   const fetchDates = useCallback(async () => {
@@ -67,13 +77,29 @@ export default function MainApp({ user, isAdmin }: Props) {
     fetchDates();
   };
 
+  const closeMobileSidebar = () => {
+    if (isMobile) setSidebarOpen(false);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden">
+      {/* Mobile overlay */}
+      {isMobile && sidebarOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-black/30"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
       <div
         className={`${
-          sidebarOpen ? "w-64" : "w-0"
-        } transition-all duration-200 overflow-hidden border-r border-gray-200 bg-gray-50 flex-shrink-0`}
+          isMobile
+            ? `fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-200 ${
+                sidebarOpen ? "translate-x-0" : "-translate-x-full"
+              }`
+            : `${sidebarOpen ? "w-64" : "w-0"} transition-all duration-200 overflow-hidden`
+        } border-r border-gray-200 bg-gray-50 flex-shrink-0`}
       >
         <Sidebar
           user={user}
@@ -87,6 +113,8 @@ export default function MainApp({ user, isAdmin }: Props) {
           onSelectTag={handleSelectTag}
           onSelectAdmin={() => setViewMode("admin")}
           onSignOut={() => signOut()}
+          onTagsChange={fetchTags}
+          onCloseMobile={closeMobileSidebar}
         />
       </div>
 
@@ -120,7 +148,7 @@ export default function MainApp({ user, isAdmin }: Props) {
             </h1>
           </div>
           {viewMode === "date" && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <button
                 onClick={() => {
                   const d = new Date(selectedDate);
@@ -129,7 +157,7 @@ export default function MainApp({ user, isAdmin }: Props) {
                 }}
                 className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
               >
-                ← 前日
+                ←
               </button>
               <button
                 onClick={() => setSelectedDate(new Date().toISOString().split("T")[0])}
@@ -145,7 +173,7 @@ export default function MainApp({ user, isAdmin }: Props) {
                 }}
                 className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
               >
-                翌日 →
+                →
               </button>
             </div>
           )}
@@ -160,6 +188,8 @@ export default function MainApp({ user, isAdmin }: Props) {
               viewMode={viewMode}
               selectedDate={selectedDate}
               selectedTagId={selectedTagId}
+              selectedTagName={selectedTagName}
+              allTags={tags}
               onTagClick={handleSelectTag}
               onDateClick={handleSelectDate}
               onDataChange={handleDataChange}

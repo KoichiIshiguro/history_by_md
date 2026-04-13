@@ -50,9 +50,12 @@ function initDb(db: Database.Database) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       user_id TEXT NOT NULL,
+      parent_id TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(name, user_id),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (parent_id) REFERENCES tags(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS block_tags (
@@ -66,6 +69,17 @@ function initDb(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_blocks_user_date ON blocks(user_id, date);
     CREATE INDEX IF NOT EXISTS idx_blocks_parent ON blocks(parent_id);
     CREATE INDEX IF NOT EXISTS idx_tags_user ON tags(user_id);
+    CREATE INDEX IF NOT EXISTS idx_tags_parent ON tags(parent_id);
     CREATE INDEX IF NOT EXISTS idx_block_tags_tag ON block_tags(tag_id);
   `);
+
+  // Migration: add parent_id and sort_order to tags if missing
+  const cols = db.prepare("PRAGMA table_info(tags)").all() as { name: string }[];
+  const colNames = cols.map((c) => c.name);
+  if (!colNames.includes("parent_id")) {
+    db.exec("ALTER TABLE tags ADD COLUMN parent_id TEXT REFERENCES tags(id) ON DELETE SET NULL");
+  }
+  if (!colNames.includes("sort_order")) {
+    db.exec("ALTER TABLE tags ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
+  }
 }
