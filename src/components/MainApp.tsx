@@ -7,8 +7,9 @@ import AdminPanel from "./AdminPanel";
 import Sidebar from "./Sidebar";
 import ActionList from "./ActionList";
 import TemplateEditor from "./TemplateEditor";
+import GetStartedGuide from "./GetStartedGuide";
 
-type ViewMode = "date" | "page" | "tag" | "admin" | "actions" | "templates";
+type ViewMode = "date" | "page" | "tag" | "admin" | "actions" | "templates" | "guide";
 
 function toLocalDateString(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -266,6 +267,9 @@ export default function MainApp({ user, isAdmin }: Props) {
               {viewMode === "actions" && (
                 <span className="text-theme-600">全アクション</span>
               )}
+              {viewMode === "guide" && (
+                <span className="text-theme-600">Get Started</span>
+              )}
               {viewMode === "admin" && "ユーザー管理"}
             </h1>
           </div>
@@ -312,12 +316,27 @@ export default function MainApp({ user, isAdmin }: Props) {
                 </button>
               </>
             )}
+            <button
+              onClick={() => setViewMode("guide")}
+              className={`rounded p-1.5 transition ${viewMode === "guide" ? "bg-theme-100 text-theme-600" : "text-gray-400 hover:bg-theme-50 hover:text-gray-600"}`}
+              title="Get Started"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
           </div>
         </header>
 
         <main className="flex-1 flex overflow-hidden">
           <div className="flex-1 overflow-auto p-4">
-            {viewMode === "templates" ? (
+            {viewMode === "guide" ? (
+              <GetStartedGuide onNavigate={(mode, id, name) => {
+                if (mode === "date") handleSelectDate(toLocalDateString(new Date()));
+                else if (mode === "actions") setViewMode("actions");
+                else if (mode === "templates") { setViewMode("templates"); setSelectedTemplateId(null); setSelectedTemplateName(""); }
+              }} />
+            ) : viewMode === "templates" ? (
               <TemplateEditor
                 selectedTemplateId={selectedTemplateId}
                 selectedTemplateName={selectedTemplateName}
