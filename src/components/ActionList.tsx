@@ -109,7 +109,17 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
                         onChange={() => toggleAction(action)}
                         className="mt-0.5 rounded border-gray-300 cursor-pointer"
                       />
-                      <div className={`flex-1 text-sm ${isDone ? "line-through text-gray-400" : ""}`}>
+                      <div
+                        className={`flex-1 text-sm cursor-pointer ${isDone ? "line-through text-gray-400" : ""}`}
+                        onClick={() => {
+                          if (action.page_id) {
+                            const page = allPages.find((p) => p.id === action.page_id);
+                            if (page) onPageClick(page.id, page.full_path || page.name);
+                          } else if (action.date) {
+                            onDateClick(action.date);
+                          }
+                        }}
+                      >
                         <MarkdownContent
                           content={displayContent}
                           allPages={allPages}

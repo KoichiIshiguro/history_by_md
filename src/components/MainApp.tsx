@@ -53,6 +53,21 @@ export default function MainApp({ user, isAdmin }: Props) {
   const [actionVersion, setActionVersion] = useState(0);
   const bumpActionVersion = useCallback(() => setActionVersion((v) => v + 1), []);
 
+  // Navigation history (back/forward)
+  type NavEntry = { viewMode: ViewMode; date: string; pageId: string | null; pageName: string; tagId: string | null; tagName: string };
+  const navHistoryRef = useRef<NavEntry[]>([]);
+  const navIndexRef = useRef(-1);
+  const isNavRef = useRef(false); // true when navigating via back/forward (skip push)
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
+  // Push initial entry on mount
+  useEffect(() => {
+    if (navHistoryRef.current.length === 0) {
+      navHistoryRef.current = [{ viewMode: "date", date: selectedDate, pageId: null, pageName: "", tagId: null, tagName: "" }];
+      navIndexRef.current = 0;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Swipe gesture handling
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -156,22 +171,65 @@ export default function MainApp({ user, isAdmin }: Props) {
     }
   }, [pages, viewMode, selectedPageId]);
 
+  const updateNavState = useCallback(() => {
+    setCanGoBack(navIndexRef.current > 0);
+    setCanGoForward(navIndexRef.current < navHistoryRef.current.length - 1);
+  }, []);
+
+  const pushNav = useCallback((entry: NavEntry) => {
+    if (isNavRef.current) { isNavRef.current = false; updateNavState(); return; }
+    const hist = navHistoryRef.current;
+    const idx = navIndexRef.current;
+    navHistoryRef.current = hist.slice(0, idx + 1);
+    navHistoryRef.current.push(entry);
+    navIndexRef.current = navHistoryRef.current.length - 1;
+    updateNavState();
+  }, [updateNavState]);
+
+  const applyNav = useCallback((entry: NavEntry) => {
+    isNavRef.current = true;
+    setViewMode(entry.viewMode);
+    setSelectedDate(entry.date);
+    setSelectedPageId(entry.pageId);
+    setSelectedPageName(entry.pageName);
+    setSelectedTagId(entry.tagId);
+    setSelectedTagName(entry.tagName);
+  }, []);
+
+  const goBack = useCallback(() => {
+    if (navIndexRef.current <= 0) return;
+    navIndexRef.current--;
+    applyNav(navHistoryRef.current[navIndexRef.current]);
+    updateNavState();
+  }, [applyNav, updateNavState]);
+
+  const goForward = useCallback(() => {
+    if (navIndexRef.current >= navHistoryRef.current.length - 1) return;
+    navIndexRef.current++;
+    applyNav(navHistoryRef.current[navIndexRef.current]);
+    updateNavState();
+  }, [applyNav, updateNavState]);
+
   const handleSelectPage = (pageId: string, pageName: string) => {
     setViewMode("page");
     setSelectedPageId(pageId);
     const page = pages.find((p) => p.id === pageId);
-    setSelectedPageName(page?.full_path || pageName);
+    const name = page?.full_path || pageName;
+    setSelectedPageName(name);
+    pushNav({ viewMode: "page", date: selectedDate, pageId, pageName: name, tagId: null, tagName: "" });
   };
 
   const handleSelectTag = (tagId: string, tagName: string) => {
     setViewMode("tag");
     setSelectedTagId(tagId);
     setSelectedTagName(tagName);
+    pushNav({ viewMode: "tag", date: selectedDate, pageId: null, pageName: "", tagId, tagName });
   };
 
   const handleSelectDate = (date: string) => {
     setViewMode("date");
     setSelectedDate(date);
+    pushNav({ viewMode: "date", date, pageId: null, pageName: "", tagId: null, tagName: "" });
   };
 
   const handleDataChange = () => {
@@ -187,7 +245,7 @@ export default function MainApp({ user, isAdmin }: Props) {
   const hasRightSidebar = viewMode === "page" && selectedPageId;
 
   return (
-    <div ref={mainRef} className="flex h-screen overflow-hidden">
+    <div ref={mainRef} className="flex h-screen overflow-hidden" suppressHydrationWarning>
       {/* Left sidebar overlay */}
       {isMobile && sidebarOpen && (
         <div className="fixed inset-0 z-20 bg-black/30" onClick={() => setSidebarOpen(false)} />
@@ -232,7 +290,7 @@ export default function MainApp({ user, isAdmin }: Props) {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="flex items-center justify-between border-b border-theme-100 bg-white px-4 py-2">
+        <header className="flex items-center justify-between border-b border-theme-100 bg-white px-4 py-2" suppressHydrationWarning>
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -304,7 +362,28 @@ export default function MainApp({ user, isAdmin }: Props) {
               {viewMode === "admin" && "ユーザー管理"}
             </h1>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" suppressHydrationWarning>
+            {/* Back / Forward navigation */}
+            <button
+              onClick={goBack}
+              disabled={!canGoBack}
+              className={`rounded p-1.5 transition ${!canGoBack ? "text-gray-300 cursor-default" : "text-gray-500 hover:bg-theme-50 hover:text-gray-700"}`}
+              title="戻る"
+                         >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <button
+              onClick={goForward}
+              disabled={!canGoForward}
+              className={`rounded p-1.5 transition ${!canGoForward ? "text-gray-300 cursor-default" : "text-gray-500 hover:bg-theme-50 hover:text-gray-700"}`}
+              title="進む"
+                         >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
             {/* Right sidebar toggle (mobile, page view only) */}
             {isMobile && hasRightSidebar && (
               <button

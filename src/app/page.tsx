@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
 import LandingPage from "@/components/LandingPage";
-import MainApp from "@/components/MainApp";
+import MainAppLoader from "@/components/MainAppLoader";
 
 export default async function Home() {
   const session = await auth();
@@ -10,5 +10,5 @@ export default async function Home() {
   }
 
   const user = session.user as any;
-  return <MainApp user={user} isAdmin={user.role === "admin"} />;
+  return <MainAppLoader user={user} isAdmin={user.role === "admin"} />;
 }
