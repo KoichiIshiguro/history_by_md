@@ -284,15 +284,22 @@ export async function upsertVectors(
   const index = getPineconeIndex();
 
   // Pinecone upsert in batches of 100
-  const vectors = chunks.map((chunk, i) => ({
-    id: chunk.id,
-    values: embeddings[i],
-    metadata: chunk.metadata as Record<string, string | number | boolean | null>,
-  }));
+  // Remove null values from metadata (Pinecone rejects nulls)
+  const vectors = chunks.map((chunk, i) => {
+    const cleanMeta: Record<string, string | number | boolean> = {};
+    for (const [k, v] of Object.entries(chunk.metadata)) {
+      if (v !== null && v !== undefined) cleanMeta[k] = v;
+    }
+    return {
+      id: chunk.id,
+      values: embeddings[i],
+      metadata: cleanMeta,
+    };
+  });
 
   for (let i = 0; i < vectors.length; i += 100) {
     const batch = vectors.slice(i, i + 100);
-    await index.upsert(batch as any);
+    await index.upsert({ records: batch } as any);
   }
 }
 
@@ -360,7 +367,7 @@ export async function geminiChat(
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -392,7 +399,7 @@ export async function geminiStream(
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
