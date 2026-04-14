@@ -50,6 +50,8 @@ export default function MainApp({ user, isAdmin }: Props) {
   const [isMobile, setIsMobile] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [selectedTemplateName, setSelectedTemplateName] = useState("");
+  const [actionVersion, setActionVersion] = useState(0);
+  const bumpActionVersion = useCallback(() => setActionVersion((v) => v + 1), []);
 
   // Swipe gesture handling
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -370,6 +372,7 @@ export default function MainApp({ user, isAdmin }: Props) {
                 onPageClick={handleSelectPage}
                 onTagClick={handleSelectTag}
                 onDateClick={handleSelectDate}
+                actionVersion={actionVersion}
               />
             ) : viewMode === "admin" && isAdmin ? (
               <AdminPanel />
@@ -387,6 +390,8 @@ export default function MainApp({ user, isAdmin }: Props) {
                 onTagClick={handleSelectTag}
                 onDateClick={handleSelectDate}
                 onDataChange={handleDataChange}
+                onActionChange={bumpActionVersion}
+                actionVersion={actionVersion}
               />
             )}
           </div>
@@ -401,6 +406,8 @@ export default function MainApp({ user, isAdmin }: Props) {
                 onPageClick={handleSelectPage}
                 onTagClick={handleSelectTag}
                 onDateClick={handleSelectDate}
+                onActionChange={bumpActionVersion}
+                actionVersion={actionVersion}
               />
             </div>
           )}
@@ -426,6 +433,8 @@ export default function MainApp({ user, isAdmin }: Props) {
                 onPageClick={handleSelectPage}
                 onTagClick={handleSelectTag}
                 onDateClick={handleSelectDate}
+                onActionChange={bumpActionVersion}
+                actionVersion={actionVersion}
               />
             </div>
           )}

@@ -21,9 +21,11 @@ interface Props {
   onPageClick: (id: string, name: string) => void;
   onTagClick: (id: string, name: string) => void;
   onDateClick: (date: string) => void;
+  onActionChange?: () => void;
+  actionVersion?: number;
 }
 
-export default function ActionList({ pageId, allPages, allTags, onPageClick, onTagClick, onDateClick }: Props) {
+export default function ActionList({ pageId, allPages, allTags, onPageClick, onTagClick, onDateClick, onActionChange, actionVersion }: Props) {
   const [actions, setActions] = useState<ActionBlock[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -38,7 +40,7 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
     setLoading(false);
   }, [pageId, showCompleted]);
 
-  useEffect(() => { fetchActions(); }, [fetchActions]);
+  useEffect(() => { fetchActions(); }, [fetchActions, actionVersion]);
 
   const toggleAction = async (action: ActionBlock) => {
     const isDone = /^!done\s/i.test(action.content);
@@ -51,6 +53,7 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
       body: JSON.stringify({ blockId: action.id, content: newContent }),
     });
     fetchActions();
+    if (onActionChange) onActionChange();
   };
 
   // Group by date

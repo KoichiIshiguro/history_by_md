@@ -58,6 +58,8 @@ interface Props {
   onTagClick: (tagId: string, tagName: string) => void;
   onDateClick: (date: string) => void;
   onDataChange: () => void;
+  onActionChange?: () => void;
+  actionVersion?: number;
 }
 
 // Pre-process custom syntax into HTML spans before markdown rendering
@@ -257,7 +259,7 @@ export function MarkdownContent({
 export default function BlockEditor({
   viewMode, selectedDate, selectedPageId, selectedPageName,
   selectedTagId, selectedTagName, allPages, allTags,
-  onPageClick, onTagClick, onDateClick, onDataChange,
+  onPageClick, onTagClick, onDateClick, onDataChange, onActionChange, actionVersion,
 }: Props) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [pageRefs, setPageRefs] = useState<Block[]>([]);
@@ -323,6 +325,11 @@ export default function BlockEditor({
 
   useEffect(() => { fetchBlocks(); }, [fetchBlocks]);
 
+  // Re-fetch blocks when actions are toggled in ActionList
+  useEffect(() => {
+    if (actionVersion && actionVersion > 0) fetchBlocks();
+  }, [actionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const saveBlocks = useCallback(async (updatedBlocks: Block[]) => {
     if (viewMode === "page" && selectedPageId) {
       await fetch("/api/blocks/save", {
@@ -343,7 +350,10 @@ export default function BlockEditor({
       });
     }
     onDataChange();
-  }, [viewMode, selectedDate, selectedPageId, onDataChange]);
+    if (onActionChange && updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content))) {
+      onActionChange();
+    }
+  }, [viewMode, selectedDate, selectedPageId, onDataChange, onActionChange]);
 
   const debouncedSave = useCallback((updatedBlocks: Block[]) => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
