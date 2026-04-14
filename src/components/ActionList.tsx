@@ -133,7 +133,7 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
                         ))}
                       </div>
                     )}
-                    {!compact && action.linkedPages && action.linkedPages.length > 0 && (
+                    {action.linkedPages && action.linkedPages.length > 0 && (
                       <div className="ml-6 mt-1 flex flex-wrap gap-1">
                         {action.linkedPages.map((p) => (
                           <span
