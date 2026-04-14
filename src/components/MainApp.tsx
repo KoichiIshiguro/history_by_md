@@ -252,7 +252,32 @@ export default function MainApp({ user, isAdmin }: Props) {
               {viewMode === "page" && (
                 <>
                   <span className="text-theme-400 text-sm mr-2">ページ</span>
-                  {selectedPageName}
+                  {(() => {
+                    const parts = selectedPageName.split("/");
+                    return parts.map((part, i) => {
+                      // Build the path up to this segment to find the matching page
+                      const pathUpTo = parts.slice(0, i + 1).join("/");
+                      const page = pages.find((p) => p.full_path === pathUpTo || (parts.length === 1 && p.name === part));
+                      const isLast = i === parts.length - 1;
+                      return (
+                        <span key={i}>
+                          {i > 0 && <span className="text-gray-400 mx-1">/</span>}
+                          {isLast ? (
+                            <span>{part}</span>
+                          ) : page ? (
+                            <span
+                              className="text-theme-500 hover:text-theme-700 cursor-pointer hover:underline"
+                              onClick={() => handleSelectPage(page.id, page.full_path || page.name)}
+                            >
+                              {part}
+                            </span>
+                          ) : (
+                            <span className="text-gray-500">{part}</span>
+                          )}
+                        </span>
+                      );
+                    });
+                  })()}
                 </>
               )}
               {viewMode === "tag" && (
