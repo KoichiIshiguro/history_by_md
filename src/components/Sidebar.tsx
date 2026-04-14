@@ -111,6 +111,24 @@ export default function Sidebar({
     } catch {}
   }, []);
 
+  // Auto-expand tree to show selected page
+  useEffect(() => {
+    if (!selectedPageId) return;
+    const ancestors = new Set<string>();
+    let current = pages.find((p) => p.id === selectedPageId);
+    while (current?.parent_id) {
+      ancestors.add(current.parent_id);
+      current = pages.find((p) => p.id === current!.parent_id);
+    }
+    if (ancestors.size > 0) {
+      setExpandedPages((prev) => {
+        const next = new Set(prev);
+        for (const id of ancestors) next.add(id);
+        return next;
+      });
+    }
+  }, [selectedPageId, pages]);
+
   const pageTree = buildPageTree(pages);
   const filteredTags = tagSearch
     ? tags.filter((t) => t.name.toLowerCase().includes(tagSearch.toLowerCase()))
