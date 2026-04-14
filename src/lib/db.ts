@@ -119,6 +119,25 @@ function initDb(db: Database.Database) {
     // Old schema without parent_id - fine, tags are flat now
   }
 
+  // Migration: add vector_synced_at to blocks (for AI vector sync tracking)
+  if (!blockColNames.includes("vector_synced_at")) {
+    db.exec("ALTER TABLE blocks ADD COLUMN vector_synced_at TEXT");
+  }
+
+  // Migration: create ai_usage table for daily API call limits
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_usage (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(user_id, date, endpoint),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_usage_user_date ON ai_usage(user_id, date);
+  `);
+
   // Migration: relax unique constraint on pages from UNIQUE(name, user_id) to UNIQUE(name, user_id, parent_id)
   // SQLite can't ALTER constraints, so we check and recreate the table if needed
   const idxInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='pages'").get() as { sql: string } | undefined;

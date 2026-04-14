@@ -17,6 +17,24 @@ export async function GET(request: NextRequest) {
     ? "(b.content LIKE '!action %' OR b.content LIKE '!done %')"
     : "b.content LIKE '!action %'";
 
+  // Helper: get child blocks for an action (stop at next block with <= indent)
+  function getActionChildren(action: any) {
+    const candidates = db
+      .prepare(
+        `SELECT id, content, indent_level, sort_order, date FROM blocks
+         WHERE user_id = ? AND date = ? AND sort_order > ?
+         AND (page_id IS NULL AND ? IS NULL OR page_id = ?)
+         ORDER BY sort_order ASC`
+      )
+      .all(user.id, action.date, action.sort_order, action.page_id, action.page_id);
+    const consecutive: any[] = [];
+    for (const child of candidates as any[]) {
+      if (child.indent_level > action.indent_level) consecutive.push(child);
+      else break;
+    }
+    return consecutive;
+  }
+
   if (pageId) {
     // Actions linked to a specific page
     const actions = db
@@ -29,24 +47,10 @@ export async function GET(request: NextRequest) {
       )
       .all(pageId, user.id);
 
-    // For each action, fetch child blocks (same date, higher indent, immediately following)
-    const enriched = actions.map((action: any) => {
-      const children = db
-        .prepare(
-          `SELECT id, content, indent_level, sort_order, date FROM blocks
-           WHERE user_id = ? AND date = ? AND sort_order > ? AND indent_level > ?
-           AND (page_id IS NULL AND ? IS NULL OR page_id = ?)
-           ORDER BY sort_order ASC`
-        )
-        .all(user.id, action.date, action.sort_order, action.indent_level, action.page_id, action.page_id);
-      // Only take consecutive children with higher indent
-      const consecutive: any[] = [];
-      for (const child of children as any[]) {
-        if (child.indent_level > action.indent_level) consecutive.push(child);
-        else break;
-      }
-      return { ...action, children: consecutive };
-    });
+    const enriched = actions.map((action: any) => ({
+      ...action,
+      children: getActionChildren(action),
+    }));
 
     return Response.json(enriched);
   }
@@ -70,21 +74,7 @@ export async function GET(request: NextRequest) {
 
   const enriched = (actions as any[]).map((action) => {
     const linkedPages = getLinkedPages.all(action.id) as { id: string; name: string }[];
-    // Fetch children
-    const children = db
-      .prepare(
-        `SELECT id, content, indent_level, sort_order, date FROM blocks
-         WHERE user_id = ? AND date = ? AND sort_order > ? AND indent_level > ?
-         AND (page_id IS NULL AND ? IS NULL OR page_id = ?)
-         ORDER BY sort_order ASC`
-      )
-      .all(user.id, action.date, action.sort_order, action.indent_level, action.page_id, action.page_id);
-    const consecutive: any[] = [];
-    for (const child of children as any[]) {
-      if (child.indent_level > action.indent_level) consecutive.push(child);
-      else break;
-    }
-    return { ...action, linkedPages, children: consecutive };
+    return { ...action, linkedPages, children: getActionChildren(action) };
   });
 
   return Response.json(enriched);

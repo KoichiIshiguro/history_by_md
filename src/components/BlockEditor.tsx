@@ -280,6 +280,8 @@ export default function BlockEditor({
   const shiftHeldRef = useRef(false);
   const skipMouseUpRef = useRef(false);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [aiGenerating, setAiGenerating] = useState<string | null>(null); // block ID being generated
+  const [aiResult, setAiResult] = useState<{ blockId: string; text: string } | null>(null);
   const undoStackRef = useRef<Block[][]>([]);
   const redoStackRef = useRef<Block[][]>([]);
 
@@ -708,6 +710,41 @@ export default function BlockEditor({
         // Inside a fenced code block — let newline through
         return;
       }
+
+      // !ai prompt detection
+      const aiMatch = editContent.match(/^!ai\s+(.+)$/i);
+      if (aiMatch) {
+        e.preventDefault();
+        const prompt = aiMatch[1];
+        setAiGenerating(block.id);
+        // Build context from surrounding blocks
+        const contextLines = blocks
+          .slice(Math.max(0, blockIndex - 3), blockIndex)
+          .map((b) => b.content)
+          .filter(Boolean)
+          .join("\n");
+        fetch("/api/ai/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, context: contextLines }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.error) {
+              setAiGenerating(null);
+              alert(`AI生成エラー: ${data.error}`);
+              return;
+            }
+            setAiGenerating(null);
+            setAiResult({ blockId: block.id, text: data.text });
+          })
+          .catch((err) => {
+            setAiGenerating(null);
+            alert(`AI生成エラー: ${err.message}`);
+          });
+        return;
+      }
+
       e.preventDefault();
       pushUndo();
       const before = editContent.slice(0, cursorPos);
@@ -1027,12 +1064,83 @@ export default function BlockEditor({
       ) : (
         <>
           <div className="rounded-lg border border-gray-200 bg-white p-3">
-            {blocks.map((block, i) => <BlockLine key={block.id} {...blockLineProps(block, i)} />)}
+            {blocks.map((block, i) => (
+              <React.Fragment key={block.id}>
+                <BlockLine {...blockLineProps(block, i)} />
+                {aiGenerating === block.id && (
+                  <div className="flex items-center gap-2 py-2 px-3 text-sm text-theme-500" style={{ paddingLeft: `${block.indent_level * 24 + 12}px` }}>
+                    <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    AI生成中...
+                    <button
+                      onClick={() => setAiGenerating(null)}
+                      className="ml-2 text-xs text-gray-400 hover:text-red-500"
+                    >
+                      キャンセル
+                    </button>
+                  </div>
+                )}
+              </React.Fragment>
+            ))}
             {blocks.length === 0 && (
               <div className="py-4 cursor-text text-sm text-gray-300 min-h-[2em]" onClick={addNewBlock}>&nbsp;</div>
             )}
           </div>
         </>
+      )}
+
+      {/* AI generation result modal */}
+      {aiResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="mx-4 w-full max-w-lg rounded-xl bg-white p-5 shadow-xl">
+            <h3 className="mb-3 text-sm font-semibold text-gray-700">AI生成結果</h3>
+            <div className="mb-4 max-h-64 overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm whitespace-pre-wrap">
+              {aiResult.text}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setAiResult(null)}
+                className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={() => {
+                  pushUndo();
+                  const lines = aiResult.text.split("\n");
+                  const blockIndex = blocks.findIndex((b) => b.id === aiResult.blockId);
+                  if (blockIndex === -1) { setAiResult(null); return; }
+                  const block = blocks[blockIndex];
+                  // Replace the !ai block with first line, insert rest as new blocks
+                  const updated = blocks.map((b) => b.id === block.id ? { ...b, content: lines[0] } : b);
+                  const newBlocks: Block[] = [];
+                  for (let i = 1; i < lines.length; i++) {
+                    if (lines[i] === "" && i < lines.length - 1) continue; // skip empty intermediate lines
+                    newBlocks.push({
+                      id: crypto.randomUUID(),
+                      content: lines[i],
+                      indent_level: block.indent_level,
+                      sort_order: 0,
+                      date: block.date,
+                    });
+                  }
+                  if (newBlocks.length > 0) updated.splice(blockIndex + 1, 0, ...newBlocks);
+                  const reordered = updated.map((b, i) => ({ ...b, sort_order: i }));
+                  setBlocks(reordered);
+                  setEditContent(lines[0]);
+                  setEditingBlockId(block.id);
+                  debouncedSave(reordered);
+                  setAiResult(null);
+                }}
+                className="rounded-lg bg-theme-500 px-4 py-2 text-sm text-white hover:bg-theme-600"
+              >
+                挿入
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

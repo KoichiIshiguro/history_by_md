@@ -8,8 +8,9 @@ import Sidebar from "./Sidebar";
 import ActionList from "./ActionList";
 import TemplateEditor from "./TemplateEditor";
 import GetStartedGuide from "./GetStartedGuide";
+import AiChat from "./AiChat";
 
-type ViewMode = "date" | "page" | "tag" | "admin" | "actions" | "templates" | "guide";
+type ViewMode = "date" | "page" | "tag" | "admin" | "actions" | "templates" | "guide" | "chat";
 
 function toLocalDateString(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -267,6 +268,9 @@ export default function MainApp({ user, isAdmin }: Props) {
               {viewMode === "actions" && (
                 <span className="text-theme-600">全アクション</span>
               )}
+              {viewMode === "chat" && (
+                <span className="text-theme-600">AIチャット</span>
+              )}
               {viewMode === "guide" && (
                 <span className="text-theme-600">Get Started</span>
               )}
@@ -317,6 +321,15 @@ export default function MainApp({ user, isAdmin }: Props) {
               </>
             )}
             <button
+              onClick={() => setViewMode("chat")}
+              className={`rounded p-1.5 transition ${viewMode === "chat" ? "bg-theme-100 text-theme-600" : "text-gray-400 hover:bg-theme-50 hover:text-gray-600"}`}
+              title="AIチャット"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+            </button>
+            <button
               onClick={() => setViewMode("guide")}
               className={`rounded p-1.5 transition ${viewMode === "guide" ? "bg-theme-100 text-theme-600" : "text-gray-400 hover:bg-theme-50 hover:text-gray-600"}`}
               title="Get Started"
@@ -330,7 +343,9 @@ export default function MainApp({ user, isAdmin }: Props) {
 
         <main className="flex-1 flex overflow-hidden">
           <div className="flex-1 overflow-auto p-4">
-            {viewMode === "guide" ? (
+            {viewMode === "chat" ? (
+              <AiChat />
+            ) : viewMode === "guide" ? (
               <GetStartedGuide onNavigate={(mode, id, name) => {
                 if (mode === "date") handleSelectDate(toLocalDateString(new Date()));
                 else if (mode === "actions") setViewMode("actions");

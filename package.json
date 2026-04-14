@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@pinecone-database/pinecone": "^7.2.0",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.9.0",
     "next": "16.2.3",
