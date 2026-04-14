@@ -211,13 +211,15 @@ export function MarkdownContent({
         },
         // Custom span handler for our custom syntax
         span({ className, children, ...props }) {
-          const dataProps = props as Record<string, string>;
+          const dp = props as Record<string, string>;
+          // rehype-raw may pass data attrs as kebab-case or camelCase depending on version
+          const getData = (kebab: string, camel: string) => dp[kebab] || dp[camel] || "";
           if (className === "page-link") {
             return (
-              <span className="page-link" onClick={(e) => {
+              <span className="page-link cursor-pointer" onClick={(e) => {
                 e.stopPropagation();
-                const pageId = dataProps["data-page-id"];
-                const pageName = dataProps["data-page-name"];
+                const pageId = getData("data-page-id", "dataPageId");
+                const pageName = getData("data-page-name", "dataPageName");
                 if (pageId && pageName) onPageClick(pageId, pageName);
               }}>
                 {children}
@@ -226,10 +228,10 @@ export function MarkdownContent({
           }
           if (className === "tag-inline") {
             return (
-              <span className="tag-inline" onClick={(e) => {
+              <span className="tag-inline cursor-pointer" onClick={(e) => {
                 e.stopPropagation();
-                const tagId = dataProps["data-tag-id"];
-                const tagName = dataProps["data-tag-name"];
+                const tagId = getData("data-tag-id", "dataTagId");
+                const tagName = getData("data-tag-name", "dataTagName");
                 if (tagId && tagName) onTagClick(tagId, tagName);
               }}>
                 {children}
@@ -238,9 +240,9 @@ export function MarkdownContent({
           }
           if (className === "date-link") {
             return (
-              <span className="date-link" onClick={(e) => {
+              <span className="date-link cursor-pointer" onClick={(e) => {
                 e.stopPropagation();
-                const date = dataProps["data-date"];
+                const date = getData("data-date", "dataDate");
                 if (date) onDateClick(date);
               }}>
                 {children}
@@ -905,12 +907,23 @@ export default function BlockEditor({
     return acc;
   }, {} as Record<string, { name: string; blocks: Block[] }>);
 
+  // Group tag blocks: date-based blocks grouped by date, page-based blocks grouped by "page:pageId"
   const groupedTagBlocks = viewMode === "tag" ? blocks.reduce((acc, b) => {
-    const key = b.date || "no-date";
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(b);
+    const key = b.page_id && b.source_page_id
+      ? `page:${b.source_page_id}`
+      : (b.date || "no-date");
+    if (!acc[key]) acc[key] = { label: "", isPage: false, pageId: "", blocks: [] };
+    if (key.startsWith("page:")) {
+      acc[key].label = b.source_page_name || "不明なページ";
+      acc[key].isPage = true;
+      acc[key].pageId = b.source_page_id || "";
+    } else {
+      acc[key].label = b.date || "日付なし";
+      acc[key].isPage = false;
+    }
+    acc[key].blocks.push(b);
     return acc;
-  }, {} as Record<string, Block[]>) : null;
+  }, {} as Record<string, { label: string; isPage: boolean; pageId: string; blocks: Block[] }>) : null;
 
   if (loading) {
     return <div className="flex items-center justify-center py-8 text-gray-400">読み込み中...</div>;
@@ -1106,13 +1119,28 @@ export default function BlockEditor({
         </>
       ) : viewMode === "tag" && groupedTagBlocks ? (
         <>
-          {Object.entries(groupedTagBlocks).sort(([a], [b]) => b.localeCompare(a)).map(([date, dateBlocks]) => (
-            <div key={date} className="mb-6">
+          {Object.entries(groupedTagBlocks)
+            .sort(([a, ga], [b, gb]) => {
+              // Sort: dates descending first, then pages
+              if (ga.isPage && !gb.isPage) return 1;
+              if (!ga.isPage && gb.isPage) return -1;
+              if (ga.isPage && gb.isPage) return ga.label.localeCompare(gb.label);
+              return b.localeCompare(a);
+            })
+            .map(([key, group]) => (
+            <div key={key} className="mb-6">
               <h2 className="mb-2 text-sm font-medium">
-                <span className="date-link cursor-pointer" onClick={() => onDateClick(date)}>{date}</span>
+                {group.isPage ? (
+                  <span className="page-link cursor-pointer" onClick={() => {
+                    const page = allPages.find((p) => p.id === group.pageId);
+                    onPageClick(group.pageId, page?.full_path || group.label);
+                  }}>{group.label}</span>
+                ) : (
+                  <span className="date-link cursor-pointer" onClick={() => onDateClick(group.blocks[0]?.date || "")}>{group.label}</span>
+                )}
               </h2>
               <div className="rounded-lg border border-gray-200 bg-white p-3">
-                {dateBlocks.map((b) => <BlockLine key={b.id} {...blockLineProps(b, 0, true)} />)}
+                {group.blocks.map((b) => <BlockLine key={b.id} {...blockLineProps(b, 0, true)} />)}
               </div>
             </div>
           ))}

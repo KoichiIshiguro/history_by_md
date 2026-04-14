@@ -52,12 +52,13 @@ export async function GET(request: NextRequest) {
   }
 
   if (tagId) {
-    // Tag view: blocks that have this tag
+    // Tag view: blocks that have this tag, with page info for page-based blocks
     const blocks = db
       .prepare(
-        `SELECT b.*
+        `SELECT b.*, p.name as source_page_name, p.id as source_page_id
          FROM blocks b
          JOIN block_tags bt ON bt.block_id = b.id
+         LEFT JOIN pages p ON p.id = b.page_id
          WHERE bt.tag_id = ? AND b.user_id = ?
          ORDER BY b.date DESC, b.sort_order ASC`
       )
