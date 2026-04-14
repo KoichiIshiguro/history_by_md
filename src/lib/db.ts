@@ -138,6 +138,29 @@ function initDb(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_ai_usage_user_date ON ai_usage(user_id, date);
   `);
 
+  // Migration: create ai_threads and ai_messages tables for chat history
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_threads (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_threads_user ON ai_threads(user_id);
+
+    CREATE TABLE IF NOT EXISTS ai_messages (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (thread_id) REFERENCES ai_threads(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_messages_thread ON ai_messages(thread_id);
+  `);
+
   // Migration: relax unique constraint on pages from UNIQUE(name, user_id) to UNIQUE(name, user_id, parent_id)
   // SQLite can't ALTER constraints, so we check and recreate the table if needed
   const idxInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='pages'").get() as { sql: string } | undefined;
