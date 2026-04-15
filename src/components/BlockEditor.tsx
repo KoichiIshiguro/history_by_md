@@ -520,9 +520,12 @@ function BlockEditorInner({
         setDateRefs(dateRefs.map((b) => b.id === editingBlockId ? updated : b));
         debouncedRefSave(updated);
       } else {
-        const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
-        setBlocks(updated);
-        debouncedSave(updated);
+        // Mutate in-place — avoid setBlocks to prevent full re-render
+        const prev = blocks.find((b) => b.id === editingBlockId);
+        if (prev) {
+          prev.content = editContent;
+          debouncedSave([...blocks]);
+        }
       }
     }
     setEditingBlockId(block.id); setEditContent(block.content); setShowSuggestions(false);
@@ -548,9 +551,13 @@ function BlockEditorInner({
       setEditingBlockId(null); setShowSuggestions(false);
       debouncedRefSave(updated); return;
     }
-    const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
-    setBlocks(updated); setEditingBlockId(null); setShowSuggestions(false);
-    debouncedSave(updated);
+    // Mutate block content in-place — avoid setBlocks to prevent full re-render
+    const block = blocks.find((b) => b.id === editingBlockId);
+    if (block) {
+      block.content = editContent;
+      debouncedSave([...blocks]);
+    }
+    setEditingBlockId(null); setShowSuggestions(false);
   };
 
   const handleContentChange = (value: string) => {
@@ -793,16 +800,16 @@ function BlockEditorInner({
       setBlocks(updated); debouncedSave(updated);
     } else if (e.key === "ArrowUp" && cursorPos === 0) {
       e.preventDefault();
-      if (blockIndex > 0) { const prev = blocks[blockIndex - 1]; setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(prev.id, prev.content.length); }
+      if (blockIndex > 0) { const prev = blocks[blockIndex - 1]; block.content = editContent; focusBlock(prev.id, prev.content.length); }
     } else if (e.key === "ArrowDown" && cursorPos === editContent.length) {
       e.preventDefault();
-      if (blockIndex < blocks.length - 1) { const next = blocks[blockIndex + 1]; setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(next.id, 0); }
+      if (blockIndex < blocks.length - 1) { const next = blocks[blockIndex + 1]; block.content = editContent; focusBlock(next.id, 0); }
     } else if (e.key === "ArrowLeft" && cursorPos === 0 && blockIndex > 0) {
       e.preventDefault(); const prev = blocks[blockIndex - 1];
-      setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(prev.id, prev.content.length);
+      block.content = editContent; focusBlock(prev.id, prev.content.length);
     } else if (e.key === "ArrowRight" && cursorPos === editContent.length && blockIndex < blocks.length - 1) {
       e.preventDefault(); const next = blocks[blockIndex + 1];
-      setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(next.id, 0);
+      block.content = editContent; focusBlock(next.id, 0);
     } else if (e.key === "Backspace" && cursorPos === 0 && (textarea.selectionEnd ?? 0) === 0 && blockIndex > 0) {
       e.preventDefault();
       pushUndo();
