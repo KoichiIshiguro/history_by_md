@@ -306,11 +306,11 @@ function BlockEditorInner({
     setLoading(false);
   }, [viewMode, selectedDate, selectedPageId, selectedTagId]);
 
-  useEffect(() => { fetchBlocks(); }, [fetchBlocks]);
+  useEffect(() => { debugLog("useEffect[fetchBlocks] triggered"); fetchBlocks(); }, [fetchBlocks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch blocks when actions are toggled in ActionList
   useEffect(() => {
-    if (actionVersion && actionVersion > 0) fetchBlocks();
+    if (actionVersion && actionVersion > 0) { debugLog(`useEffect[actionVersion=${actionVersion}] triggered`); fetchBlocks(); }
   }, [actionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveBlocks = useCallback(async (updatedBlocks: Block[]) => {
@@ -341,7 +341,8 @@ function BlockEditorInner({
     const oldTags = extractTags(lastSavedBlocksRef.current);
     const newTags = extractTags(updatedBlocks);
     const tagsChanged = oldTags.size !== newTags.size || [...newTags].some((t) => !oldTags.has(t)) || [...oldTags].some((t) => !newTags.has(t));
-    if (tagsChanged && onTagsChange) onTagsChange();
+    debugLog(`saveBlocks: old=${[...oldTags].join(",")} new=${[...newTags].join(",")} changed=${tagsChanged}`);
+    if (tagsChanged && onTagsChange) { debugLog("saveBlocks: calling onTagsChange"); onTagsChange(); }
     lastSavedBlocksRef.current = updatedBlocks;
 
     if (onActionChange && updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content))) {
