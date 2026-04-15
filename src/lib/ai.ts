@@ -237,29 +237,51 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
 
   const results: number[][] = [];
 
-  // Process in batches of VOYAGE_BATCH_SIZE
+  // Process in batches of VOYAGE_BATCH_SIZE (with retry for rate limits)
   for (let i = 0; i < texts.length; i += VOYAGE_BATCH_SIZE) {
     const batch = texts.slice(i, i + VOYAGE_BATCH_SIZE);
-    const res = await fetch("https://api.voyageai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        input: batch,
-        model: "voyage-3-lite",
-      }),
-    });
 
-    if (!res.ok) {
+    let lastError = "";
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (attempt > 0) {
+        // Wait before retry: 25s, 30s, 40s, 50s (free tier = 3 RPM)
+        await new Promise((r) => setTimeout(r, (25 + attempt * 10) * 1000));
+      }
+
+      const res = await fetch("https://api.voyageai.com/v1/embeddings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          input: batch,
+          model: "voyage-3-lite",
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        for (const item of data.data) {
+          results.push(item.embedding);
+        }
+        lastError = "";
+        break;
+      }
+
+      if (res.status === 429) {
+        lastError = await res.text();
+        console.warn(`Voyage AI rate limited (attempt ${attempt + 1}/5), retrying...`);
+        continue;
+      }
+
+      // Non-retryable error
       const err = await res.text();
       throw new Error(`Voyage AI error: ${res.status} ${err}`);
     }
 
-    const data = await res.json();
-    for (const item of data.data) {
-      results.push(item.embedding);
+    if (lastError) {
+      throw new Error(`Voyage AI error: 429 (exhausted retries) ${lastError}`);
     }
   }
 
