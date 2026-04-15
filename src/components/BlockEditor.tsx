@@ -253,24 +253,13 @@ function BlockEditorInner({
   const undoStackRef = useRef<Block[][]>([]);
   const redoStackRef = useRef<Block[][]>([]);
   const editStartedAtRef = useRef<number>(0);
-  const [debugLogs, setDebugLogs] = useState<string[]>([]);
-  const debugLog = useCallback((msg: string) => {
-    console.log(msg);
-    setDebugLogs((prev) => [...prev.slice(-15), `${new Date().toLocaleTimeString()}: ${msg}`]);
-  }, []);
 
   useEffect(() => {
     fetch("/api/templates").then((r) => r.ok ? r.json() : []).then(setTemplates).catch(() => {});
   }, []);
 
   // Track mount/unmount
-  useEffect(() => {
-    debugLog("BlockEditorInner MOUNTED");
-    return () => { console.log("[EDIT] BlockEditorInner UNMOUNTED"); };
-  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
-
   const fetchBlocks = useCallback(async () => {
-    debugLog("fetchBlocks called (dep changed)");
     setLoading(true);
     let url = "/api/blocks";
     if (viewMode === "page" && selectedPageId) {
@@ -303,16 +292,15 @@ function BlockEditorInner({
     setLoading(false);
   }, [viewMode, selectedDate, selectedPageId, selectedTagId]);
 
-  useEffect(() => { debugLog("useEffect[fetchBlocks] triggered"); fetchBlocks(); }, [fetchBlocks]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchBlocks(); }, [fetchBlocks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch blocks when actions are toggled in ActionList
   useEffect(() => {
-    if (actionVersion && actionVersion > 0) { debugLog(`useEffect[actionVersion=${actionVersion}] triggered`); fetchBlocks(); }
+    if (actionVersion && actionVersion > 0) { fetchBlocks(); }
   }, [actionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save blocks to API, then notify sidebar via stable refs (no dependency chain)
   const saveBlocks = useCallback(async (updatedBlocks: Block[]) => {
-    debugLog("saveBlocks: saving to API");
     if (viewMode === "page" && selectedPageId) {
       await fetch("/api/blocks/save", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -334,10 +322,9 @@ function BlockEditorInner({
     // Notify sidebar directly via CustomEvent — bypasses MainApp state entirely
     const hasTags = updatedBlocks.some((b) => /#[^\s#]+/.test(b.content));
     const hasActions = updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content));
-    debugLog(`saveBlocks done: hasTags=${hasTags} hasActions=${hasActions}`);
     if (hasTags) window.dispatchEvent(new Event("tags-changed"));
     if (hasActions) window.dispatchEvent(new Event("actions-changed"));
-  }, [viewMode, selectedDate, selectedPageId, debugLog]);
+  }, [viewMode, selectedDate, selectedPageId]);
 
   const debouncedSave = useCallback((updatedBlocks: Block[]) => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -500,7 +487,6 @@ function BlockEditorInner({
   };
 
   const startEditing = (block: Block) => {
-    debugLog(`startEditing id=${block.id.slice(0,6)} cur=${editingBlockId?.slice(0,6) ?? "null"}`);
     if (selectedBlockIds.size > 0) return;
     if (blurTimeoutRef.current) { clearTimeout(blurTimeoutRef.current); blurTimeoutRef.current = null; }
     // Push undo snapshot when starting to edit a new block
@@ -525,10 +511,9 @@ function BlockEditorInner({
   };
 
   const finishEditing = () => {
-    debugLog(`finishEditing id=${editingBlockId?.slice(0,6) ?? "null"} elapsed=${Date.now() - editStartedAtRef.current}ms`);
-    if (!editingBlockId) { debugLog("finishEditing: skip (no id)"); return; }
+    if (!editingBlockId) return;
     // Ignore blur that fires immediately after entering edit mode (mobile keyboard layout shift)
-    if (Date.now() - editStartedAtRef.current < 500) { debugLog("finishEditing: skip (too soon)"); return; }
+    if (Date.now() - editStartedAtRef.current < 500) return;
     // Don't save during AI generation or when AI result is pending — the !ai content should not overwrite anything
     if (aiGenerating || aiResult) {
       setEditingBlockId(null); setShowSuggestions(false);
@@ -813,120 +798,209 @@ function BlockEditorInner({
     }
   };
 
+  // Helper: get ref list and setter for a block
+  const getRefContext = (block: Block) => {
+    const isPageRef = pageRefs.some((b) => b.id === block.id);
+    return {
+      list: isPageRef ? pageRefs : dateRefs,
+      setList: isPageRef ? setPageRefs : setDateRefs,
+    };
+  };
+
   const handleRefKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>, block: Block) => {
     if (e.key === "Shift") shiftHeldRef.current = true;
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
     if (showSuggestions) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSelectedSuggestion((p) => Math.min(p + 1, suggestions.items.length - 1)); return; }
       if (e.key === "ArrowUp") { e.preventDefault(); setSelectedSuggestion((p) => Math.max(p - 1, 0)); return; }
       if (e.key === "Tab" || e.key === "Enter") { if (suggestions.items[selectedSuggestion]) { e.preventDefault(); applySuggestion(suggestions.items[selectedSuggestion].name); return; } }
       if (e.key === "Escape") { setShowSuggestions(false); return; }
     }
-    if (e.key === "Tab") {
+
+    const textarea = e.currentTarget;
+    const cursorPos = textarea.selectionStart ?? 0;
+    const meta = e.metaKey || e.ctrlKey;
+    const { list: refList, setList: setRefList } = getRefContext(block);
+    const blockIndex = refList.findIndex((b) => b.id === block.id);
+
+    // Escape from !ai mode
+    if (e.key === "Escape" && /^!ai\s/i.test(editContent)) {
       e.preventDefault();
-      const newIndent = e.shiftKey ? Math.max(0, block.indent_level - 1) : block.indent_level + 1;
-      const updated = { ...block, indent_level: newIndent, content: editContent };
-      setPageRefs(pageRefs.map((b) => b.id === block.id ? updated : b));
-      setDateRefs(dateRefs.map((b) => b.id === block.id ? updated : b));
-      debouncedRefSave(updated);
+      setEditContent("");
+      return;
     }
-    if (e.key === "Backspace") {
-      const textarea = e.currentTarget;
-      const cursorPos = textarea.selectionStart ?? 0;
-      if (cursorPos === 0 && (textarea.selectionEnd ?? 0) === 0) {
-        // Merge with previous block in same ref group
-        const isPageRef = pageRefs.some((b) => b.id === block.id);
-        const refList = isPageRef ? pageRefs : dateRefs;
-        const setRefList = isPageRef ? setPageRefs : setDateRefs;
-        const idx = refList.findIndex((b) => b.id === block.id);
-        if (idx > 0) {
-          e.preventDefault();
-          const prev = refList[idx - 1];
-          const merged = prev.content + editContent;
-          const updatedPrev = { ...prev, content: merged };
-          const newList = refList.filter((b) => b.id !== block.id);
-          newList[idx - 1] = updatedPrev;
-          setRefList(newList);
-          // Delete current block from server
-          fetch("/api/blocks", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: block.id }) });
-          debouncedRefSave(updatedPrev);
-          setEditContent(merged);
-          setEditingBlockId(prev.id);
-          setTimeout(() => {
-            const el = inputRefs.current.get(prev.id);
-            if (el) { el.focus(); el.selectionStart = el.selectionEnd = prev.content.length; }
-          }, 0);
-          return;
-        }
-      }
+
+    // Ctrl+A: select all blocks in ref group
+    if (meta && e.key === "a") {
+      e.preventDefault(); finishEditing();
+      setSelectedBlockIds(new Set(refList.map((b) => b.id))); setSelectionAnchor(0); return;
     }
+
     if (e.key === "Enter") {
-      const textarea = e.currentTarget;
-      const cursorPos = textarea.selectionStart ?? 0;
-      // Check unclosed code fence
+      // Inside unclosed ``` code block: allow newline
       const lines = editContent.slice(0, cursorPos).split("\n");
       const openFences = lines.filter((l) => l.trimStart().startsWith("```")).length;
-      if (openFences % 2 === 1) return; // inside code block, allow newline
+      if (openFences % 2 === 1) return;
+
+      // !ai prompt detection
+      const aiMatch = editContent.match(/^!ai\s+(.+)$/i);
+      if (aiMatch) {
+        e.preventDefault();
+        const prompt = aiMatch[1];
+        setAiGenerating(block.id);
+        const contextLines = refList
+          .slice(Math.max(0, blockIndex - 3), blockIndex)
+          .map((b) => b.content).filter(Boolean).join("\n");
+        fetch("/api/ai/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, context: contextLines }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.error) { setAiGenerating(null); alert(`AI生成エラー: ${data.error}`); return; }
+            setAiGenerating(null);
+            setAiResult({ blockId: block.id, text: data.text });
+          })
+          .catch((err) => { setAiGenerating(null); alert(`AI生成エラー: ${err.message}`); });
+        return;
+      }
 
       e.preventDefault();
       const before = editContent.slice(0, cursorPos);
       const after = editContent.slice(cursorPos);
-
-      // Update current block content
       const updatedBlock = { ...block, content: before };
-
-      // Create new block in the same context (same date / page_id)
       const newBlock: Block = {
-        id: crypto.randomUUID(),
-        content: after,
-        indent_level: block.indent_level,
-        sort_order: block.sort_order + 1,
-        date: block.date,
-        page_id: block.page_id,
-        source_page_name: block.source_page_name,
-        source_page_id: block.source_page_id,
+        id: crypto.randomUUID(), content: after, indent_level: block.indent_level,
+        sort_order: block.sort_order + 1, date: block.date, page_id: block.page_id,
+        source_page_name: block.source_page_name, source_page_id: block.source_page_id,
       };
-
-      // Insert into the correct ref list
-      const isPageRef = pageRefs.some((b) => b.id === block.id);
-      if (isPageRef) {
-        const idx = pageRefs.findIndex((b) => b.id === block.id);
-        const updated = [...pageRefs];
-        updated[idx] = updatedBlock;
-        updated.splice(idx + 1, 0, newBlock);
-        setPageRefs(updated);
-      } else {
-        const idx = dateRefs.findIndex((b) => b.id === block.id);
-        const updated = [...dateRefs];
-        updated[idx] = updatedBlock;
-        updated.splice(idx + 1, 0, newBlock);
-        setDateRefs(updated);
-      }
-
-      setEditContent(after);
-      setEditingBlockId(newBlock.id);
-      setTimeout(() => {
-        const el = inputRefs.current.get(newBlock.id);
-        if (el) { el.focus(); el.selectionStart = el.selectionEnd = 0; }
-      }, 0);
-
-      // Save both blocks
+      const updated = [...refList];
+      updated[blockIndex] = updatedBlock;
+      updated.splice(blockIndex + 1, 0, newBlock);
+      setRefList(updated);
+      setEditContent(after); setEditingBlockId(newBlock.id);
+      setTimeout(() => { const el = inputRefs.current.get(newBlock.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = 0; } }, 0);
       debouncedRefSave(updatedBlock);
-      // Save new block via POST to create it on server
       fetch("/api/blocks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: newBlock.id,
-          content: newBlock.content,
-          indent_level: newBlock.indent_level,
-          sort_order: newBlock.sort_order,
-          date: newBlock.date,
-          page_id: newBlock.page_id || null,
-        }),
-      }).then(() => onDataChange());
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: newBlock.id, content: newBlock.content, indent_level: newBlock.indent_level, sort_order: newBlock.sort_order, date: newBlock.date, page_id: newBlock.page_id || null }),
+      });
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      const newIndent = e.shiftKey ? Math.max(0, block.indent_level - 1) : block.indent_level + 1;
+      const updated = { ...block, indent_level: newIndent, content: editContent };
+      setRefList(refList.map((b) => b.id === block.id ? updated : b));
+      debouncedRefSave(updated);
+    } else if (e.key === "ArrowUp" && cursorPos === 0) {
+      e.preventDefault();
+      if (blockIndex > 0) { const prev = refList[blockIndex - 1]; setRefList(refList.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(prev.id, prev.content.length); }
+    } else if (e.key === "ArrowDown" && cursorPos === editContent.length) {
+      e.preventDefault();
+      if (blockIndex < refList.length - 1) { const next = refList[blockIndex + 1]; setRefList(refList.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(next.id, 0); }
+    } else if (e.key === "ArrowLeft" && cursorPos === 0 && blockIndex > 0) {
+      e.preventDefault(); const prev = refList[blockIndex - 1];
+      setRefList(refList.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(prev.id, prev.content.length);
+    } else if (e.key === "ArrowRight" && cursorPos === editContent.length && blockIndex < refList.length - 1) {
+      e.preventDefault(); const next = refList[blockIndex + 1];
+      setRefList(refList.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(next.id, 0);
+    } else if (e.key === "Backspace" && cursorPos === 0 && (textarea.selectionEnd ?? 0) === 0 && blockIndex > 0) {
+      e.preventDefault();
+      const prev = refList[blockIndex - 1];
+      const merged = prev.content + editContent;
+      const cursorAt = prev.content.length;
+      const updated = refList.map((b) => b.id === prev.id ? { ...b, content: merged } : b).filter((b) => b.id !== block.id);
+      setRefList(updated);
+      fetch("/api/blocks", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: block.id }) });
+      debouncedRefSave({ ...prev, content: merged });
+      setEditContent(merged); setEditingBlockId(prev.id);
+      setTimeout(() => { const el = inputRefs.current.get(prev.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = cursorAt; } }, 0);
     }
   };
+
+  const handleRefPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>, block: Block, _blockIndex: number) => {
+    const text = e.clipboardData.getData("text/plain");
+    if (!text || !text.includes("\n")) return; // single line paste is handled natively
+    e.preventDefault();
+    const textarea = e.currentTarget;
+    const cursorPos = textarea.selectionStart ?? 0;
+    const selEnd = textarea.selectionEnd ?? cursorPos;
+    const before = editContent.slice(0, cursorPos);
+    const after = editContent.slice(selEnd);
+    const lines = text.split("\n");
+    const firstContent = before + lines[0];
+    const lastLineContent = lines[lines.length - 1] + after;
+    const { list: refList, setList: setRefList } = getRefContext(block);
+    const blockIndex = refList.findIndex((b) => b.id === block.id);
+
+    if (lines.length === 1) {
+      const newContent = firstContent + after;
+      setEditContent(newContent);
+      const updated = { ...block, content: newContent };
+      setRefList(refList.map((b) => b.id === block.id ? updated : b));
+      debouncedRefSave(updated);
+      return;
+    }
+
+    // Update current block with first line
+    const updatedCurrent = { ...block, content: firstContent };
+    const updated = [...refList];
+    updated[blockIndex] = updatedCurrent;
+
+    // Create new blocks for middle + last lines
+    const newBlocks: Block[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const content = i === lines.length - 1 ? lastLineContent : lines[i];
+      newBlocks.push({
+        id: crypto.randomUUID(), content, indent_level: block.indent_level,
+        sort_order: 0, date: block.date, page_id: block.page_id,
+        source_page_name: block.source_page_name, source_page_id: block.source_page_id,
+      });
+    }
+    updated.splice(blockIndex + 1, 0, ...newBlocks);
+    setRefList(updated);
+
+    // Save current block + create new blocks on server
+    debouncedRefSave(updatedCurrent);
+    for (const nb of newBlocks) {
+      fetch("/api/blocks", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: nb.id, content: nb.content, indent_level: nb.indent_level, sort_order: nb.sort_order, date: nb.date, page_id: nb.page_id || null }),
+      });
+    }
+
+    // Focus last new block
+    const lastBlock = newBlocks[newBlocks.length - 1];
+    const cursorAt = lines[lines.length - 1].length;
+    setEditingBlockId(lastBlock.id);
+    setEditContent(lastBlock.content);
+    setTimeout(() => { const el = inputRefs.current.get(lastBlock.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = cursorAt; } }, 0);
+  };
+
+  const handleRefBlockMouseDown = useCallback((e: React.MouseEvent, _blockIndex: number, block: Block) => {
+    const { list: refList } = getRefContext(block);
+    const refIndex = refList.findIndex((b) => b.id === block.id);
+    if (e.shiftKey && selectionAnchor !== null) {
+      e.preventDefault();
+      skipMouseUpRef.current = true;
+      if (editingBlockId) {
+        const updated = refList.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+        const { setList: setRefList } = getRefContext(block);
+        setRefList(updated);
+        setEditingBlockId(null);
+        setShowSuggestions(false);
+      }
+      // Select range within ref group
+      const start = Math.min(selectionAnchor, refIndex);
+      const end = Math.max(selectionAnchor, refIndex);
+      setSelectedBlockIds(new Set(refList.slice(start, end + 1).map((b) => b.id)));
+      setSelectionAnchor(refIndex);
+      setTimeout(() => containerRef.current?.focus(), 0);
+      return;
+    }
+    if (!e.shiftKey) { clearSelection(); setSelectionAnchor(refIndex); }
+  }, [editingBlockId, editContent, selectionAnchor, clearSelection]);
 
   const addNewBlock = () => {
     pushUndo();
@@ -979,11 +1053,11 @@ function BlockEditorInner({
     allPages, allTags,
     setInputRef, onStartEditing: startEditing,
     onEditContentChange: handleContentChange,
-    onFinishEditing: () => { debugLog("onBlur → schedule finishEditing 150ms"); blurTimeoutRef.current = setTimeout(finishEditing, 150); },
+    onFinishEditing: () => { blurTimeoutRef.current = setTimeout(finishEditing, 150); },
     onKeyDown: isRef ? ((e: KeyboardEvent<HTMLTextAreaElement>, b: Block, _i: number) => handleRefKeyDown(e, b)) : handleKeyDown,
-    onPaste: isRef ? undefined : handlePaste,
+    onPaste: isRef ? handleRefPaste : handlePaste,
     onPageClick, onTagClick, onDateClick, onApplySuggestion: applySuggestion,
-    onBlockMouseDown: isRef ? (() => {}) : handleBlockMouseDown,
+    onBlockMouseDown: isRef ? ((e: React.MouseEvent, blockIndex: number) => handleRefBlockMouseDown(e, blockIndex, block)) : handleBlockMouseDown,
     skipMouseUpRef,
     onIndent: isRef ? (b: Block) => {
       const updated = { ...b, indent_level: b.indent_level + 1, content: editContent };
@@ -1013,13 +1087,6 @@ function BlockEditorInner({
     <div ref={containerRef} className="mx-auto max-w-3xl outline-none" tabIndex={-1}
       onKeyDown={(e) => { if (e.key === "Shift") shiftHeldRef.current = true; handleContainerKeyDown(e); }}
       onKeyUp={(e) => { if (e.key === "Shift") shiftHeldRef.current = false; }}>
-      {/* Debug overlay */}
-      {debugLogs.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-50 max-h-48 overflow-auto bg-black/85 p-2 text-xs font-mono text-green-400">
-          {debugLogs.map((log, i) => <div key={i}>{log}</div>)}
-          <button onClick={() => setDebugLogs([])} className="mt-1 text-red-400 underline">clear</button>
-        </div>
-      )}
       {viewMode === "page" ? (
         <>
           {/* Page title (editable) */}
