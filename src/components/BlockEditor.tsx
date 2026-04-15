@@ -209,48 +209,6 @@ export function MarkdownContent({
         hr() {
           return <hr className="gfm-hr" />;
         },
-        // Custom span handler for our custom syntax
-        span({ className, children, ...props }) {
-          const dp = props as Record<string, string>;
-          // rehype-raw may pass data attrs as kebab-case or camelCase depending on version
-          const getData = (kebab: string, camel: string) => dp[kebab] || dp[camel] || "";
-          if (className === "page-link") {
-            return (
-              <span className="page-link cursor-pointer" onClick={(e) => {
-                e.stopPropagation();
-                const pageId = getData("data-page-id", "dataPageId");
-                const pageName = getData("data-page-name", "dataPageName");
-                if (pageId && pageName) onPageClick(pageId, pageName);
-              }}>
-                {children}
-              </span>
-            );
-          }
-          if (className === "tag-inline") {
-            return (
-              <span className="tag-inline cursor-pointer" onClick={(e) => {
-                e.stopPropagation();
-                const tagId = getData("data-tag-id", "dataTagId");
-                const tagName = getData("data-tag-name", "dataTagName");
-                if (tagId && tagName) onTagClick(tagId, tagName);
-              }}>
-                {children}
-              </span>
-            );
-          }
-          if (className === "date-link") {
-            return (
-              <span className="date-link cursor-pointer" onClick={(e) => {
-                e.stopPropagation();
-                const date = getData("data-date", "dataDate");
-                if (date) onDateClick(date);
-              }}>
-                {children}
-              </span>
-            );
-          }
-          return <span className={className} {...props}>{children}</span>;
-        },
       }}
     >
       {processed}
@@ -1258,6 +1216,25 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
     <div className={`group relative flex items-stretch min-h-[2em] ${isSelected ? "bg-blue-100 rounded" : ""} ${!isEditing ? "cursor-text hover:bg-gray-50 rounded" : ""}`}
       style={{ paddingLeft: `${indent}px` }}
       onMouseDown={(e) => onBlockMouseDown(e, blockIndex)}
+      onClick={(e) => {
+        // Event delegation for page-link, tag-inline, date-link clicks
+        const target = e.target as HTMLElement;
+        const link = target.closest('.page-link, .tag-inline, .date-link') as HTMLElement | null;
+        if (!link) return;
+        e.stopPropagation();
+        if (link.classList.contains('page-link')) {
+          const pageId = link.getAttribute('data-page-id') || "";
+          const pageName = link.getAttribute('data-page-name') || "";
+          if (pageId && pageName) onPageClick(pageId, pageName);
+        } else if (link.classList.contains('tag-inline')) {
+          const tagId = link.getAttribute('data-tag-id') || "";
+          const tagName = link.getAttribute('data-tag-name') || "";
+          if (tagId && tagName) onTagClick(tagId, tagName);
+        } else if (link.classList.contains('date-link')) {
+          const date = link.getAttribute('data-date') || "";
+          if (date) onDateClick(date);
+        }
+      }}
       onMouseUp={(e) => {
         // Skip mouseUp after shift+click selection
         if (skipMouseUpRef.current) { skipMouseUpRef.current = false; return; }
