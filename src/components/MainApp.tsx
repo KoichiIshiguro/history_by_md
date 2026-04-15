@@ -232,11 +232,16 @@ export default function MainApp({ user, isAdmin }: Props) {
     pushNav({ viewMode: "date", date, pageId: null, pageName: "", tagId: null, tagName: "" });
   };
 
-  const handleDataChange = () => {
+  const handleDataChange = useCallback(() => {
     fetchPages();
     fetchTags();
     fetchDates();
-  };
+  }, [fetchPages, fetchTags, fetchDates]);
+
+  // Granular refresh: only tags (for block edits that add/remove tags)
+  const handleTagsChange = useCallback(() => {
+    fetchTags();
+  }, [fetchTags]);
 
   const closeMobileSidebar = () => {
     if (isMobile) setSidebarOpen(false);
@@ -495,6 +500,7 @@ export default function MainApp({ user, isAdmin }: Props) {
                 onTagClick={handleSelectTag}
                 onDateClick={handleSelectDate}
                 onDataChange={handleDataChange}
+                onTagsChange={handleTagsChange}
                 onActionChange={bumpActionVersion}
                 actionVersion={actionVersion}
               />

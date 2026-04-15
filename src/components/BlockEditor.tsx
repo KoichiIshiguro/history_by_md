@@ -63,6 +63,7 @@ interface Props {
   onTagClick: (tagId: string, tagName: string) => void;
   onDateClick: (date: string) => void;
   onDataChange: () => void;
+  onTagsChange?: () => void;
   onActionChange?: () => void;
   actionVersion?: number;
 }
@@ -221,10 +222,10 @@ export function MarkdownContent({
   );
 }
 
-export default function BlockEditor({
+function BlockEditorInner({
   viewMode, selectedDate, selectedPageId, selectedPageName,
   selectedTagId, selectedTagName, allPages, allTags,
-  onPageClick, onTagClick, onDateClick, onDataChange, onActionChange, actionVersion,
+  onPageClick, onTagClick, onDateClick, onDataChange, onTagsChange, onActionChange, actionVersion,
 }: Props) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [pageRefs, setPageRefs] = useState<Block[]>([]);
@@ -253,6 +254,7 @@ export default function BlockEditor({
   const [newChildPageName, setNewChildPageName] = useState("");
   const undoStackRef = useRef<Block[][]>([]);
   const redoStackRef = useRef<Block[][]>([]);
+  const lastSavedBlocksRef = useRef<Block[]>([]);
 
   useEffect(() => {
     fetch("/api/templates").then((r) => r.ok ? r.json() : []).then(setTemplates).catch(() => {});
@@ -273,14 +275,17 @@ export default function BlockEditor({
       const data = await res.json();
       if (viewMode === "page" && data.pageBlocks !== undefined) {
         setBlocks(data.pageBlocks);
+        lastSavedBlocksRef.current = data.pageBlocks;
         setPageRefs(data.pageRefs || []);
         setDateRefs(data.dateRefs || []);
       } else if (viewMode === "tag") {
         setBlocks(data);
+        lastSavedBlocksRef.current = data;
         setPageRefs([]);
         setDateRefs([]);
       } else {
         setBlocks(data);
+        lastSavedBlocksRef.current = data;
         setPageRefs([]);
         setDateRefs([]);
       }
@@ -314,11 +319,22 @@ export default function BlockEditor({
         body: JSON.stringify({ date: selectedDate, blocks: updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i })) }),
       });
     }
-    onDataChange();
+    // Only refresh tags if tag content changed (not full onDataChange)
+    const extractTags = (bls: Block[]) => {
+      const tags = new Set<string>();
+      for (const b of bls) for (const m of b.content.matchAll(/#([^\s#]+)/g)) tags.add(m[1]);
+      return tags;
+    };
+    const oldTags = extractTags(lastSavedBlocksRef.current);
+    const newTags = extractTags(updatedBlocks);
+    const tagsChanged = oldTags.size !== newTags.size || [...newTags].some((t) => !oldTags.has(t)) || [...oldTags].some((t) => !newTags.has(t));
+    if (tagsChanged && onTagsChange) onTagsChange();
+    lastSavedBlocksRef.current = updatedBlocks;
+
     if (onActionChange && updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content))) {
       onActionChange();
     }
-  }, [viewMode, selectedDate, selectedPageId, onDataChange, onActionChange]);
+  }, [viewMode, selectedDate, selectedPageId, onTagsChange, onActionChange]);
 
   const debouncedSave = useCallback((updatedBlocks: Block[]) => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -333,9 +349,10 @@ export default function BlockEditor({
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: block.id, content: block.content, indent_level: block.indent_level, sort_order: block.sort_order }),
       });
-      onDataChange();
+      // Only refresh tags if tag content might have changed
+      if (onTagsChange && /#/.test(block.content)) onTagsChange();
     }, 800);
-  }, [onDataChange]);
+  }, [onTagsChange]);
 
   const pushUndo = useCallback(() => {
     undoStackRef.current.push(blocks.map((b) => ({ ...b })));
@@ -1230,11 +1247,27 @@ export default function BlockEditor({
   );
 }
 
-function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, showSuggestions,
-  suggestions, selectedSuggestion, allPages, allTags, setInputRef, onStartEditing,
-  onEditContentChange, onFinishEditing, onKeyDown, onPaste, onPageClick, onTagClick, onDateClick,
-  onApplySuggestion, onBlockMouseDown, skipMouseUpRef, onIndent, onOutdent,
-}: {
+const BlockEditor = React.memo(BlockEditorInner, (prev, next) => {
+  // Skip re-render if only allPages/allTags references changed but content is same
+  if (prev.viewMode !== next.viewMode) return false;
+  if (prev.selectedDate !== next.selectedDate) return false;
+  if (prev.selectedPageId !== next.selectedPageId) return false;
+  if (prev.selectedPageName !== next.selectedPageName) return false;
+  if (prev.selectedTagId !== next.selectedTagId) return false;
+  if (prev.selectedTagName !== next.selectedTagName) return false;
+  if (prev.actionVersion !== next.actionVersion) return false;
+  // allPages: compare by length + ids (not reference)
+  if (prev.allPages.length !== next.allPages.length) return false;
+  if (prev.allPages.some((p, i) => p.id !== next.allPages[i]?.id || p.name !== next.allPages[i]?.name || p.parent_id !== next.allPages[i]?.parent_id)) return false;
+  // allTags: compare by length + ids
+  if (prev.allTags.length !== next.allTags.length) return false;
+  if (prev.allTags.some((t, i) => t.id !== next.allTags[i]?.id || t.name !== next.allTags[i]?.name)) return false;
+  // Callbacks: always stable with useCallback, skip check
+  return true;
+});
+export default BlockEditor;
+
+interface BlockLineProps {
   block: Block; blockIndex: number; isEditing: boolean; isSelected: boolean;
   editContent: string; showSuggestions: boolean;
   suggestions: { type: "tag" | "page" | "template"; items: { id: string; name: string; content?: string }[] };
@@ -1252,7 +1285,13 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
   skipMouseUpRef: React.MutableRefObject<boolean>;
   onIndent?: (block: Block) => void;
   onOutdent?: (block: Block) => void;
-}) {
+}
+
+const BlockLine = React.memo(function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, showSuggestions,
+  suggestions, selectedSuggestion, allPages, allTags, setInputRef, onStartEditing,
+  onEditContentChange, onFinishEditing, onKeyDown, onPaste, onPageClick, onTagClick, onDateClick,
+  onApplySuggestion, onBlockMouseDown, skipMouseUpRef, onIndent, onOutdent,
+}: BlockLineProps) {
   const indent = block.indent_level * 24;
 
   return (
@@ -1386,7 +1425,27 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
       )}
     </div>
   );
-}
+}, (prev, next) => {
+  // Only re-render if this block's data or editing state actually changed
+  // block ref: .map() preserves ref for unchanged blocks, so === is sufficient
+  if (prev.block !== next.block) return false;
+  if (prev.blockIndex !== next.blockIndex) return false;
+  if (prev.isEditing !== next.isEditing) return false;
+  if (prev.isSelected !== next.isSelected) return false;
+  // Only compare edit-mode props when editing
+  if (next.isEditing) {
+    if (prev.editContent !== next.editContent) return false;
+    if (prev.showSuggestions !== next.showSuggestions) return false;
+    if (prev.selectedSuggestion !== next.selectedSuggestion) return false;
+  }
+  // allPages/allTags: only affect markdown rendering (non-editing blocks)
+  if (!next.isEditing) {
+    if (prev.allPages !== next.allPages) return false;
+    if (prev.allTags !== next.allTags) return false;
+  }
+  // Skip function props — they're recreated each render but functionally identical
+  return true;
+});
 
 // --- Draggable child page item ---
 function DraggableChildPage({ page, onPageClick }: { page: PageInfo; onPageClick: (id: string, name: string) => void }) {
