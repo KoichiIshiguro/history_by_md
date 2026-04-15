@@ -78,7 +78,22 @@ export async function PUT(request: NextRequest) {
   }
   const user = session.user as any;
   const db = getDb();
-  const { id, name, parent_id } = await request.json();
+  const body = await request.json();
+
+  // Bulk reorder: { reorder: [{ id, parent_id, sort_order }] }
+  if (body.reorder) {
+    const stmt = db.prepare("UPDATE pages SET parent_id = ?, sort_order = ? WHERE id = ? AND user_id = ?");
+    const tx = db.transaction(() => {
+      for (const item of body.reorder) {
+        stmt.run(item.parent_id ?? null, item.sort_order, item.id, user.id);
+      }
+    });
+    tx();
+    return Response.json({ ok: true });
+  }
+
+  // Single page update
+  const { id, name, parent_id } = body;
 
   if (name !== undefined) {
     // Check for duplicate within same parent

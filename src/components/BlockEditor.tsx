@@ -6,6 +6,11 @@ import React, {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
+import {
+  DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
+  DragStartEvent, DragEndEvent,
+} from "@dnd-kit/core";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 
 // Load mermaid dynamically from CDN to avoid 291MB npm dependency
 let mermaidLoaded = false;
@@ -925,6 +930,17 @@ export default function BlockEditor({
     onPageClick, onTagClick, onDateClick, onApplySuggestion: applySuggestion,
     onBlockMouseDown: isRef ? (() => {}) : handleBlockMouseDown,
     skipMouseUpRef,
+    onIndent: isRef ? undefined : (b: Block) => {
+      pushUndo();
+      const updated = blocks.map((bl) => bl.id === b.id ? { ...bl, indent_level: b.indent_level + 1, content: editContent } : bl);
+      setBlocks(updated); debouncedSave(updated);
+    },
+    onOutdent: isRef ? undefined : (b: Block) => {
+      if (b.indent_level <= 0) return;
+      pushUndo();
+      const updated = blocks.map((bl) => bl.id === b.id ? { ...bl, indent_level: b.indent_level - 1, content: editContent } : bl);
+      setBlocks(updated); debouncedSave(updated);
+    },
   });
 
   return (
@@ -976,7 +992,7 @@ export default function BlockEditor({
             )}
           </div>
 
-          {/* Child pages */}
+          {/* Child pages with drag & drop */}
           {(() => {
             const childPages = allPages.filter((p) => p.parent_id === selectedPageId);
             if (childPages.length === 0 && !addingChildPage && viewMode !== "page") return null;
@@ -993,56 +1009,39 @@ export default function BlockEditor({
                 onDataChange();
               }
             };
+            const handleChildPageDrop = async (dragId: string, dropId: string) => {
+              if (dragId === dropId) return;
+              if (dropId === "__parent__") {
+                // Move to grandparent (parent of current page)
+                const currentPage = allPages.find((p) => p.id === selectedPageId);
+                const grandparentId = currentPage?.parent_id ?? null;
+                await fetch("/api/pages", {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ reorder: [{ id: dragId, parent_id: grandparentId, sort_order: 999 }] }),
+                });
+              } else {
+                // Move as child of the drop target (sibling → child)
+                await fetch("/api/pages", {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ reorder: [{ id: dragId, parent_id: dropId, sort_order: 0 }] }),
+                });
+              }
+              onDataChange();
+            };
             return (
-              <div className="mb-4 rounded-lg border border-gray-200 bg-white">
-                <ul className="divide-y divide-gray-100">
-                  {childPages.map((cp) => (
-                    <li key={cp.id}>
-                      <button
-                        onClick={() => onPageClick(cp.id, cp.name)}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-theme-50 hover:text-theme-700 transition text-left"
-                      >
-                        <svg className="h-4 w-4 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        {cp.name}
-                      </button>
-                    </li>
-                  ))}
-                  {addingChildPage ? (
-                    <li className="flex items-center gap-2 px-3 py-2">
-                      <svg className="h-4 w-4 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      <input
-                        type="text"
-                        value={newChildPageName}
-                        onChange={(e) => setNewChildPageName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleCreateChildPage();
-                          if (e.key === "Escape") { setAddingChildPage(false); setNewChildPageName(""); }
-                        }}
-                        onBlur={() => { if (!newChildPageName.trim()) { setAddingChildPage(false); setNewChildPageName(""); } }}
-                        placeholder="ページ名を入力..."
-                        className="flex-1 text-sm border border-gray-300 rounded px-2 py-1 outline-none focus:border-theme-400"
-                        autoFocus
-                      />
-                    </li>
-                  ) : (
-                    <li>
-                      <button
-                        onClick={() => setAddingChildPage(true)}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:text-theme-600 hover:bg-theme-50 transition"
-                      >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                        </svg>
-                        ページ作成
-                      </button>
-                    </li>
-                  )}
-                </ul>
-              </div>
+              <ChildPageList
+                childPages={childPages}
+                selectedPageId={selectedPageId!}
+                onPageClick={onPageClick}
+                onDrop={handleChildPageDrop}
+                addingChildPage={addingChildPage}
+                newChildPageName={newChildPageName}
+                setNewChildPageName={setNewChildPageName}
+                setAddingChildPage={setAddingChildPage}
+                handleCreateChildPage={handleCreateChildPage}
+              />
             );
           })()}
 
@@ -1234,7 +1233,7 @@ export default function BlockEditor({
 function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, showSuggestions,
   suggestions, selectedSuggestion, allPages, allTags, setInputRef, onStartEditing,
   onEditContentChange, onFinishEditing, onKeyDown, onPaste, onPageClick, onTagClick, onDateClick,
-  onApplySuggestion, onBlockMouseDown, skipMouseUpRef,
+  onApplySuggestion, onBlockMouseDown, skipMouseUpRef, onIndent, onOutdent,
 }: {
   block: Block; blockIndex: number; isEditing: boolean; isSelected: boolean;
   editContent: string; showSuggestions: boolean;
@@ -1251,6 +1250,8 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
   onApplySuggestion: (name: string) => void;
   onBlockMouseDown: (e: React.MouseEvent, blockIndex: number) => void;
   skipMouseUpRef: React.MutableRefObject<boolean>;
+  onIndent?: (block: Block) => void;
+  onOutdent?: (block: Block) => void;
 }) {
   const indent = block.indent_level * 24;
 
@@ -1320,6 +1321,38 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
             onPaste={onPaste ? (e) => onPaste(e, block, blockIndex) : undefined}
             className="block-line w-full resize-none border-none bg-blue-50 p-1 text-sm outline-none rounded leading-snug overflow-hidden"
             rows={1} autoFocus />
+          {/* Indent/Outdent buttons for mobile */}
+          {(onIndent || onOutdent) && (
+            <div className="flex items-center gap-1 mt-0.5">
+              <button
+                onMouseDown={(e) => { e.preventDefault(); onOutdent?.(block); }}
+                disabled={block.indent_level <= 0}
+                className={`flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs transition ${
+                  block.indent_level <= 0 ? "text-gray-300 cursor-not-allowed" : "text-gray-500 hover:bg-gray-200 active:bg-gray-300"
+                }`}
+                title="インデント減"
+              >
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7" />
+                </svg>
+                <svg className="h-3 w-3 -ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <button
+                onMouseDown={(e) => { e.preventDefault(); onIndent?.(block); }}
+                className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs text-gray-500 hover:bg-gray-200 active:bg-gray-300 transition"
+                title="インデント増"
+              >
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+                <svg className="h-3 w-3 -ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          )}
           {showSuggestions && (
             <div className="absolute left-0 top-full z-10 mt-1 min-w-56 max-w-md rounded border border-gray-200 bg-white shadow-lg">
               {suggestions.items.map((item, i) => (
@@ -1349,6 +1382,125 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
             ? <MarkdownContent content={block.content} allPages={allPages} allTags={allTags}
                 onPageClick={onPageClick} onTagClick={onTagClick} onDateClick={onDateClick} />
             : "\u00A0"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Draggable child page item ---
+function DraggableChildPage({ page, onPageClick }: { page: PageInfo; onPageClick: (id: string, name: string) => void }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `child-${page.id}` });
+  const style = transform ? { transform: `translate(${transform.x}px, ${transform.y}px)`, opacity: isDragging ? 0.4 : 1 } : undefined;
+  return (
+    <div ref={setNodeRef} {...listeners} {...attributes} style={style}
+      className="cursor-grab active:cursor-grabbing">
+      <DroppableChildPage page={page} onPageClick={onPageClick} />
+    </div>
+  );
+}
+
+// --- Droppable wrapper for each child page (drop = make dragged page a child of this) ---
+function DroppableChildPage({ page, onPageClick }: { page: PageInfo; onPageClick: (id: string, name: string) => void }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `childDrop-${page.id}` });
+  return (
+    <div ref={setNodeRef}
+      className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition ${
+        isOver ? "bg-theme-100 border-theme-400 ring-1 ring-theme-400" : "bg-white border-gray-200 hover:bg-theme-50 hover:border-theme-300"
+      }`}>
+      <svg className="h-3.5 w-3.5 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      </svg>
+      <button onClick={() => onPageClick(page.id, page.name)} className="text-gray-700 hover:text-theme-600 truncate">
+        {page.name}
+      </button>
+    </div>
+  );
+}
+
+// --- ChildPageList with drag & drop ---
+function ChildPageList({ childPages, selectedPageId, onPageClick, onDrop, addingChildPage, newChildPageName, setNewChildPageName, setAddingChildPage, handleCreateChildPage }: {
+  childPages: PageInfo[];
+  selectedPageId: string;
+  onPageClick: (id: string, name: string) => void;
+  onDrop: (dragId: string, dropId: string) => void;
+  addingChildPage: boolean;
+  newChildPageName: string;
+  setNewChildPageName: (v: string) => void;
+  setAddingChildPage: (v: boolean) => void;
+  handleCreateChildPage: () => void;
+}) {
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+
+  // ../  drop target
+  const { setNodeRef: setParentDropRef, isOver: isOverParent } = useDroppable({ id: "childDrop-__parent__" });
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setDraggedId(String(event.active.id).replace("child-", ""));
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setDraggedId(null);
+    if (!over) return;
+    const dragId = String(active.id).replace("child-", "");
+    const dropRawId = String(over.id).replace("childDrop-", "");
+    if (dragId === dropRawId) return;
+    onDrop(dragId, dropRawId);
+  };
+
+  return (
+    <div className="mb-3">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">子ページ</span>
+        <button onClick={() => setAddingChildPage(!addingChildPage)}
+          className="text-gray-400 hover:text-theme-500 transition" title="子ページ追加">
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+        </button>
+      </div>
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <div className="flex flex-wrap gap-1.5">
+          {/* ../ parent drop target */}
+          <div ref={setParentDropRef}
+            className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm transition ${
+              isOverParent ? "bg-yellow-50 border-yellow-400 ring-1 ring-yellow-400" : "bg-gray-50 border-gray-200 text-gray-400"
+            }`}>
+            <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            ../
+          </div>
+          {childPages.map((cp) => (
+            <DraggableChildPage key={cp.id} page={cp} onPageClick={onPageClick} />
+          ))}
+        </div>
+        <DragOverlay>
+          {draggedId ? (
+            <div className="rounded-lg bg-white px-3 py-1.5 text-sm shadow-lg border border-theme-300">
+              {childPages.find((p) => p.id === draggedId)?.name}
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+      {addingChildPage && (
+        <div className="mt-1.5 flex gap-1">
+          <input
+            type="text"
+            value={newChildPageName}
+            onChange={(e) => setNewChildPageName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); handleCreateChildPage(); }
+              if (e.key === "Escape") setAddingChildPage(false);
+            }}
+            placeholder="子ページ名..."
+            autoFocus
+            className="flex-1 rounded-lg border border-theme-300 px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-theme-400"
+          />
+          <button onClick={handleCreateChildPage}
+            className="rounded-lg bg-theme-500 px-3 py-1 text-sm text-white hover:bg-theme-600 transition">追加</button>
         </div>
       )}
     </div>

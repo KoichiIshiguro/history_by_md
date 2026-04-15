@@ -1,6 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
+  DragStartEvent, DragEndEvent, DragOverEvent,
+} from "@dnd-kit/core";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 
 interface Page {
   id: string;
@@ -173,6 +178,124 @@ export default function Sidebar({
     setAddingChildOf(null);
   };
 
+  // --- Drag & Drop for page tree ---
+  const [draggedPageId, setDraggedPageId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dropPosition, setDropPosition] = useState<"before" | "inside" | "after" | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  // Flatten tree for ordering
+  const flattenTree = useCallback((nodes: PageTreeNode[], parentId: string | null = null): { id: string; parent_id: string | null }[] => {
+    const result: { id: string; parent_id: string | null }[] = [];
+    for (const node of nodes) {
+      result.push({ id: node.id, parent_id: parentId });
+      if (node.children.length > 0) result.push(...flattenTree(node.children, node.id));
+    }
+    return result;
+  }, []);
+
+  // Check if targetId is a descendant of dragId
+  const isDescendant = useCallback((dragId: string, targetId: string): boolean => {
+    const check = (nodes: PageTreeNode[]): boolean => {
+      for (const n of nodes) {
+        if (n.id === dragId) return findInChildren(n.children, targetId);
+        if (n.children.length > 0 && check(n.children)) return true;
+      }
+      return false;
+    };
+    const findInChildren = (nodes: PageTreeNode[], id: string): boolean => {
+      for (const n of nodes) {
+        if (n.id === id) return true;
+        if (findInChildren(n.children, id)) return true;
+      }
+      return false;
+    };
+    return check(pageTree);
+  }, [pageTree]);
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const pageId = String(event.active.id).replace("page-", "");
+    setDraggedPageId(pageId);
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
+    const { over, active } = event;
+    if (!over) { setDropTargetId(null); setDropPosition(null); return; }
+    const targetId = String(over.id).replace("drop-", "");
+    const dragId = String(active.id).replace("page-", "");
+    if (targetId === dragId || isDescendant(dragId, targetId)) {
+      setDropTargetId(null); setDropPosition(null); return;
+    }
+    // Determine position based on pointer Y relative to target element
+    const rect = over.rect;
+    const y = event.activatorEvent instanceof MouseEvent ? event.activatorEvent.clientY : 0;
+    // Use delta to compute current pointer position
+    const pointerY = (event.delta?.y ?? 0) + y;
+    const third = rect.height / 3;
+    const relY = pointerY - rect.top;
+    let pos: "before" | "inside" | "after";
+    if (relY < third) pos = "before";
+    else if (relY > third * 2) pos = "after";
+    else pos = "inside";
+    setDropTargetId(targetId);
+    setDropPosition(pos);
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const dragId = draggedPageId;
+    const targetId = dropTargetId;
+    const pos = dropPosition;
+    setDraggedPageId(null); setDropTargetId(null); setDropPosition(null);
+    if (!dragId || !targetId || !pos || dragId === targetId) return;
+
+    const targetPage = pages.find((p) => p.id === targetId);
+    if (!targetPage) return;
+
+    let newParentId: string | null;
+    let siblings: Page[];
+
+    if (pos === "inside") {
+      // Drop as child of target
+      newParentId = targetId;
+      siblings = pages.filter((p) => p.parent_id === targetId && p.id !== dragId);
+      setExpandedPages((prev) => new Set(prev).add(targetId));
+    } else {
+      // Drop before/after target → same parent as target
+      newParentId = targetPage.parent_id;
+      siblings = pages.filter((p) => (p.parent_id === targetPage.parent_id || (!p.parent_id && !targetPage.parent_id)) && p.id !== dragId);
+    }
+
+    // Build new order
+    const ordered: { id: string; parent_id: string | null; sort_order: number }[] = [];
+    if (pos === "inside") {
+      // Append at end of target's children
+      for (let i = 0; i < siblings.length; i++) {
+        ordered.push({ id: siblings[i].id, parent_id: newParentId, sort_order: i });
+      }
+      ordered.push({ id: dragId, parent_id: newParentId, sort_order: siblings.length });
+    } else {
+      // Insert before/after target in siblings list
+      const targetIdx = siblings.findIndex((p) => p.id === targetId);
+      const insertIdx = pos === "before" ? targetIdx : targetIdx + 1;
+      const newList = [...siblings];
+      newList.splice(insertIdx, 0, pages.find((p) => p.id === dragId)!);
+      for (let i = 0; i < newList.length; i++) {
+        ordered.push({ id: newList[i].id, parent_id: newParentId, sort_order: i });
+      }
+    }
+
+    await fetch("/api/pages", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reorder: ordered }),
+    });
+    onPagesChange();
+  };
+
+  const handleDragCancel = () => {
+    setDraggedPageId(null); setDropTargetId(null); setDropPosition(null);
+  };
+
   const confirmDeletePage = async () => {
     if (!deleteTarget) return;
     const deletedId = deleteTarget.id;
@@ -295,7 +418,7 @@ export default function Sidebar({
             </button>
           </div>
           {!collapsedSections.has("pages") && (
-            <>
+            <DndContext sensors={sensors} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd} onDragCancel={handleDragCancel}>
               {addingChildOf === "__root__" && (
                 <InlineInput depth={0} placeholder="ページ名..."
                   onSubmit={(n) => createPage(n, null)} onCancel={() => setAddingChildOf(null)} />
@@ -310,9 +433,17 @@ export default function Sidebar({
                   onSelectPage={(id, name) => click(() => onSelectPage(id, name))}
                   onDeletePage={(id, name) => setDeleteTarget({ id, name })}
                   onAddChild={(id) => setAddingChildOf(addingChildOf === id ? null : id)}
-                  onCreatePage={createPage} onCancelAdd={() => setAddingChildOf(null)} />
+                  onCreatePage={createPage} onCancelAdd={() => setAddingChildOf(null)}
+                  isDragging={!!draggedPageId} dropTargetId={dropTargetId} dropPosition={dropPosition} />
               ))}
-            </>
+              <DragOverlay>
+                {draggedPageId ? (
+                  <div className="rounded bg-white px-3 py-1 text-sm shadow-lg border border-theme-300">
+                    {pages.find((p) => p.id === draggedPageId)?.name}
+                  </div>
+                ) : null}
+              </DragOverlay>
+            </DndContext>
           )}
         </div>
 
@@ -441,21 +572,35 @@ function InlineInput({ depth, placeholder, onSubmit, onCancel }: {
 
 function PageNode({ page, depth, selectedPageId, viewMode, expandedPages, addingChildOf,
   onToggleExpand, onSelectPage, onDeletePage, onAddChild, onCreatePage, onCancelAdd,
+  isDragging, dropTargetId, dropPosition,
 }: {
   page: PageTreeNode; depth: number; selectedPageId: string | null; viewMode: string;
   expandedPages: Set<string>; addingChildOf: string | null;
   onToggleExpand: (id: string) => void; onSelectPage: (id: string, name: string) => void;
   onDeletePage: (id: string, name: string) => void; onAddChild: (id: string) => void;
   onCreatePage: (name: string, parentId: string | null) => void; onCancelAdd: () => void;
+  isDragging?: boolean; dropTargetId?: string | null; dropPosition?: "before" | "inside" | "after" | null;
 }) {
   const hasChildren = page.children.length > 0;
   const isExpanded = expandedPages.has(page.id);
   const isSelected = viewMode === "page" && selectedPageId === page.id;
 
+  const { attributes, listeners, setNodeRef: setDragRef, transform } = useDraggable({ id: `page-${page.id}`, data: { page } });
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: `drop-${page.id}`, data: { page } });
+
+  const isDropTarget = dropTargetId === page.id;
+  const dragStyle = transform ? { opacity: 0.4 } : undefined;
+
   return (
-    <div>
-      <div className={`group/pg flex items-center rounded py-1 pr-1 text-sm ${isSelected ? "bg-theme-100 text-theme-700" : "text-gray-600 hover:bg-gray-100"}`}
-        style={{ paddingLeft: `${8 + depth * 16}px` }}>
+    <div ref={setDropRef}>
+      {isDropTarget && dropPosition === "before" && (
+        <div className="mx-2 h-0.5 rounded bg-theme-500" style={{ marginLeft: `${8 + depth * 16}px` }} />
+      )}
+      <div ref={setDragRef} {...listeners} {...attributes}
+        className={`group/pg flex items-center rounded py-1 pr-1 text-sm cursor-grab active:cursor-grabbing ${
+          isSelected ? "bg-theme-100 text-theme-700" : isDropTarget && dropPosition === "inside" ? "bg-theme-50 ring-1 ring-theme-400 ring-inset" : "text-gray-600 hover:bg-gray-100"
+        }`}
+        style={{ paddingLeft: `${8 + depth * 16}px`, ...dragStyle }}>
         <button onClick={() => hasChildren && onToggleExpand(page.id)}
           className={`mr-1 flex h-4 w-4 flex-shrink-0 items-center justify-center text-xs ${hasChildren ? "text-gray-400 hover:text-gray-600" : "text-transparent"}`}>
           {hasChildren ? (
@@ -480,19 +625,26 @@ function PageNode({ page, depth, selectedPageId, viewMode, expandedPages, adding
           </button>
         </div>
       </div>
+      {isDropTarget && dropPosition === "after" && !hasChildren && (
+        <div className="mx-2 h-0.5 rounded bg-theme-500" style={{ marginLeft: `${8 + depth * 16}px` }} />
+      )}
       {(hasChildren && isExpanded || addingChildOf === page.id) && (
         <div>
           {hasChildren && isExpanded && page.children.map((child) => (
             <PageNode key={child.id} page={child} depth={depth + 1} selectedPageId={selectedPageId} viewMode={viewMode}
               expandedPages={expandedPages} addingChildOf={addingChildOf}
               onToggleExpand={onToggleExpand} onSelectPage={onSelectPage} onDeletePage={onDeletePage}
-              onAddChild={onAddChild} onCreatePage={onCreatePage} onCancelAdd={onCancelAdd} />
+              onAddChild={onAddChild} onCreatePage={onCreatePage} onCancelAdd={onCancelAdd}
+              isDragging={isDragging} dropTargetId={dropTargetId} dropPosition={dropPosition} />
           ))}
           {addingChildOf === page.id && (
             <InlineInput depth={depth + 1} placeholder="サブページ名..."
               onSubmit={(n) => onCreatePage(n, page.id)} onCancel={onCancelAdd} />
           )}
         </div>
+      )}
+      {isDropTarget && dropPosition === "after" && hasChildren && (
+        <div className="mx-2 h-0.5 rounded bg-theme-500" style={{ marginLeft: `${8 + depth * 16}px` }} />
       )}
     </div>
   );
