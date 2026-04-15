@@ -526,7 +526,7 @@ function BlockEditorInner({
   const finishEditing = () => {
     if (!editingBlockId) return;
     // Ignore blur that fires immediately after entering edit mode (mobile keyboard layout shift)
-    if (Date.now() - editStartedAtRef.current < 300) return;
+    if (Date.now() - editStartedAtRef.current < 500) return;
     // Don't save during AI generation or when AI result is pending — the !ai content should not overwrite anything
     if (aiGenerating || aiResult) {
       setEditingBlockId(null); setShowSuggestions(false);
