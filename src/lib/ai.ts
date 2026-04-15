@@ -367,7 +367,7 @@ export async function geminiChat(
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -377,6 +377,7 @@ export async function geminiChat(
         generationConfig: {
           temperature: 0.7,
           maxOutputTokens: 2048,
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
     }
@@ -399,7 +400,7 @@ export async function geminiStream(
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -409,6 +410,7 @@ export async function geminiStream(
         generationConfig: {
           temperature: 0.7,
           maxOutputTokens: 2048,
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
     }
