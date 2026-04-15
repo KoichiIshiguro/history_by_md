@@ -1,4 +1,4 @@
-const CACHE_NAME = 'histmd-v2';
+const CACHE_NAME = 'histmd-v3';
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg'];
 
 // Install: cache the app shell
@@ -28,13 +28,20 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
+  // Only handle http/https — skip chrome-extension:// etc.
+  if (!url.protocol.startsWith('http')) return;
+
+  // Only cache GET requests — Cache API doesn't support PUT/POST/DELETE
+  const isGet = request.method === 'GET';
+
   // NEVER cache auth routes — let them pass through to the server
   if (url.pathname.startsWith('/api/auth/')) {
     return;
   }
 
-  // Network-first for API calls
+  // Network-first for API calls (only cache GETs)
   if (url.pathname.startsWith('/api/')) {
+    if (!isGet) return; // Let non-GET API calls pass through
     event.respondWith(
       fetch(request)
         .then((response) => {
