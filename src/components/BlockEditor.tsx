@@ -256,13 +256,18 @@ function BlockEditorInner({
   const redoStackRef = useRef<Block[][]>([]);
   const lastSavedBlocksRef = useRef<Block[]>([]);
   const editStartedAtRef = useRef<number>(0);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const debugLog = useCallback((msg: string) => {
+    console.log(msg);
+    setDebugLogs((prev) => [...prev.slice(-15), `${new Date().toLocaleTimeString()}: ${msg}`]);
+  }, []);
 
   useEffect(() => {
     fetch("/api/templates").then((r) => r.ok ? r.json() : []).then(setTemplates).catch(() => {});
   }, []);
 
   const fetchBlocks = useCallback(async () => {
-    console.log("[EDIT] fetchBlocks called", new Error().stack?.split("\n").slice(1, 4).join(" ← "));
+    debugLog("fetchBlocks called");
     setLoading(true);
     let url = "/api/blocks";
     if (viewMode === "page" && selectedPageId) {
@@ -501,7 +506,7 @@ function BlockEditorInner({
   };
 
   const startEditing = (block: Block) => {
-    console.log("[EDIT] startEditing called", block.id, "current editingBlockId:", editingBlockId);
+    debugLog(`startEditing id=${block.id.slice(0,6)} cur=${editingBlockId?.slice(0,6) ?? "null"}`);
     if (selectedBlockIds.size > 0) return;
     if (blurTimeoutRef.current) { clearTimeout(blurTimeoutRef.current); blurTimeoutRef.current = null; }
     // Push undo snapshot when starting to edit a new block
@@ -526,10 +531,10 @@ function BlockEditorInner({
   };
 
   const finishEditing = () => {
-    console.log("[EDIT] finishEditing called", "editingBlockId:", editingBlockId, "elapsed:", Date.now() - editStartedAtRef.current, "ms");
-    if (!editingBlockId) { console.log("[EDIT] finishEditing: no editingBlockId, skip"); return; }
+    debugLog(`finishEditing id=${editingBlockId?.slice(0,6) ?? "null"} elapsed=${Date.now() - editStartedAtRef.current}ms`);
+    if (!editingBlockId) { debugLog("finishEditing: skip (no id)"); return; }
     // Ignore blur that fires immediately after entering edit mode (mobile keyboard layout shift)
-    if (Date.now() - editStartedAtRef.current < 500) { console.log("[EDIT] finishEditing: too soon after startEditing, skip"); return; }
+    if (Date.now() - editStartedAtRef.current < 500) { debugLog("finishEditing: skip (too soon)"); return; }
     // Don't save during AI generation or when AI result is pending — the !ai content should not overwrite anything
     if (aiGenerating || aiResult) {
       setEditingBlockId(null); setShowSuggestions(false);
@@ -948,7 +953,7 @@ function BlockEditorInner({
     allPages, allTags,
     setInputRef, onStartEditing: startEditing,
     onEditContentChange: handleContentChange,
-    onFinishEditing: () => { console.log("[EDIT] onBlur fired, scheduling finishEditing in 150ms"); blurTimeoutRef.current = setTimeout(finishEditing, 150); },
+    onFinishEditing: () => { debugLog("onBlur → schedule finishEditing 150ms"); blurTimeoutRef.current = setTimeout(finishEditing, 150); },
     onKeyDown: isRef ? ((e: KeyboardEvent<HTMLTextAreaElement>, b: Block, _i: number) => handleRefKeyDown(e, b)) : handleKeyDown,
     onPaste: isRef ? undefined : handlePaste,
     onPageClick, onTagClick, onDateClick, onApplySuggestion: applySuggestion,
@@ -971,6 +976,13 @@ function BlockEditorInner({
     <div ref={containerRef} className="mx-auto max-w-3xl outline-none" tabIndex={-1}
       onKeyDown={(e) => { if (e.key === "Shift") shiftHeldRef.current = true; handleContainerKeyDown(e); }}
       onKeyUp={(e) => { if (e.key === "Shift") shiftHeldRef.current = false; }}>
+      {/* Debug overlay */}
+      {debugLogs.length > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 max-h-48 overflow-auto bg-black/85 p-2 text-xs font-mono text-green-400">
+          {debugLogs.map((log, i) => <div key={i}>{log}</div>)}
+          <button onClick={() => setDebugLogs([])} className="mt-1 text-red-400 underline">clear</button>
+        </div>
+      )}
       {viewMode === "page" ? (
         <>
           {/* Page title (editable) */}
