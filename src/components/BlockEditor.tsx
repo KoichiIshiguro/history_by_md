@@ -255,6 +255,7 @@ function BlockEditorInner({
   const undoStackRef = useRef<Block[][]>([]);
   const redoStackRef = useRef<Block[][]>([]);
   const lastSavedBlocksRef = useRef<Block[]>([]);
+  const editStartedAtRef = useRef<number>(0);
 
   useEffect(() => {
     fetch("/api/templates").then((r) => r.ok ? r.json() : []).then(setTemplates).catch(() => {});
@@ -518,11 +519,14 @@ function BlockEditorInner({
       }
     }
     setEditingBlockId(block.id); setEditContent(block.content); setShowSuggestions(false);
+    editStartedAtRef.current = Date.now();
     setTimeout(() => { inputRefs.current.get(block.id)?.focus(); }, 0);
   };
 
   const finishEditing = () => {
     if (!editingBlockId) return;
+    // Ignore blur that fires immediately after entering edit mode (mobile keyboard layout shift)
+    if (Date.now() - editStartedAtRef.current < 300) return;
     // Don't save during AI generation or when AI result is pending — the !ai content should not overwrite anything
     if (aiGenerating || aiResult) {
       setEditingBlockId(null); setShowSuggestions(false);
