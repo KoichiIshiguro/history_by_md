@@ -1239,33 +1239,38 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
   return (
     <div className={`group relative flex items-stretch min-h-[2em] ${isSelected ? "bg-blue-100 rounded" : ""} ${!isEditing ? "cursor-text hover:bg-gray-50 rounded" : ""}`}
       style={{ paddingLeft: `${indent}px` }}
-      onMouseDown={(e) => onBlockMouseDown(e, blockIndex)}
-      onClick={(e) => {
-        // Event delegation for page-link, tag-inline, date-link clicks
+      onMouseDown={(e) => {
+        // Don't trigger selection/re-render when clicking on links — it replaces DOM nodes
+        // and prevents the click event from firing
         const target = e.target as HTMLElement;
-        const link = target.closest('.page-link, .tag-inline, .date-link') as HTMLElement | null;
-        if (!link) return;
-        e.stopPropagation();
-        if (link.classList.contains('page-link')) {
-          const pageId = link.getAttribute('data-page-id') || "";
-          const pageName = link.getAttribute('data-page-name') || "";
-          if (pageId && pageName) onPageClick(pageId, pageName);
-        } else if (link.classList.contains('tag-inline')) {
-          const tagId = link.getAttribute('data-tag-id') || "";
-          const tagName = link.getAttribute('data-tag-name') || "";
-          if (tagId && tagName) onTagClick(tagId, tagName);
-        } else if (link.classList.contains('date-link')) {
-          const date = link.getAttribute('data-date') || "";
-          if (date) onDateClick(date);
-        }
+        if (target.closest('.page-link, .tag-inline, .date-link, .gfm-link')) return;
+        onBlockMouseDown(e, blockIndex);
       }}
       onMouseUp={(e) => {
         // Skip mouseUp after shift+click selection
         if (skipMouseUpRef.current) { skipMouseUpRef.current = false; return; }
         if (isEditing) return;
-        // Don't enter edit mode if clicking on a link (page, tag, date)
         const target = e.target as HTMLElement;
-        if (target.closest('.page-link, .tag-inline, .date-link, .gfm-link')) return;
+        const link = target.closest('.page-link, .tag-inline, .date-link') as HTMLElement | null;
+        if (link) {
+          // Navigate via event delegation using data attributes from DOM
+          e.stopPropagation();
+          if (link.classList.contains('page-link')) {
+            const pageId = link.getAttribute('data-page-id') || "";
+            const pageName = link.getAttribute('data-page-name') || "";
+            if (pageId && pageName) onPageClick(pageId, pageName);
+          } else if (link.classList.contains('tag-inline')) {
+            const tagId = link.getAttribute('data-tag-id') || "";
+            const tagName = link.getAttribute('data-tag-name') || "";
+            if (tagId && tagName) onTagClick(tagId, tagName);
+          } else if (link.classList.contains('date-link')) {
+            const date = link.getAttribute('data-date') || "";
+            if (date) onDateClick(date);
+          }
+          return;
+        }
+        // Don't enter edit mode if clicking on external links
+        if (target.closest('.gfm-link')) return;
         onStartEditing(block);
       }}>
       {isEditing ? (
