@@ -490,6 +490,11 @@ export default function BlockEditor({
 
   const finishEditing = () => {
     if (!editingBlockId) return;
+    // Don't save during AI generation or when AI result is pending — the !ai content should not overwrite anything
+    if (aiGenerating || aiResult) {
+      setEditingBlockId(null); setShowSuggestions(false);
+      return;
+    }
     const refBlock = [...pageRefs, ...dateRefs].find((b) => b.id === editingBlockId);
     if (refBlock) {
       const updated = { ...refBlock, content: editContent };
@@ -1025,7 +1030,26 @@ export default function BlockEditor({
 
           {/* Page content */}
           <div className="rounded-lg border border-gray-200 bg-white p-3">
-            {blocks.map((block, i) => <BlockLine key={block.id} {...blockLineProps(block, i)} />)}
+            {blocks.map((block, i) => (
+              <React.Fragment key={block.id}>
+                <BlockLine {...blockLineProps(block, i)} />
+                {aiGenerating === block.id && (
+                  <div className="flex items-center gap-2 py-2 px-3 text-sm text-theme-500" style={{ paddingLeft: `${block.indent_level * 24 + 12}px` }}>
+                    <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    AI生成中...
+                    <button
+                      onClick={() => setAiGenerating(null)}
+                      className="ml-2 text-xs text-gray-400 hover:text-red-500"
+                    >
+                      キャンセル
+                    </button>
+                  </div>
+                )}
+              </React.Fragment>
+            ))}
             {blocks.length === 0 && (
               <div className="py-4 cursor-text text-sm text-gray-300 min-h-[2em]" onClick={addNewBlock}>&nbsp;</div>
             )}
