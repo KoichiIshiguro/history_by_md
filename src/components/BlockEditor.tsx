@@ -332,8 +332,11 @@ function BlockEditorInner({
       });
     }
     // Notify sidebar directly via CustomEvent — bypasses MainApp state entirely
-    if (updatedBlocks.some((b) => /#[^\s#]+/.test(b.content))) window.dispatchEvent(new Event("tags-changed"));
-    if (updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content))) window.dispatchEvent(new Event("actions-changed"));
+    const hasTags = updatedBlocks.some((b) => /#[^\s#]+/.test(b.content));
+    const hasActions = updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content));
+    debugLog(`saveBlocks done: hasTags=${hasTags} hasActions=${hasActions}`);
+    if (hasTags) window.dispatchEvent(new Event("tags-changed"));
+    if (hasActions) window.dispatchEvent(new Event("actions-changed"));
   }, [viewMode, selectedDate, selectedPageId, debugLog]);
 
   const debouncedSave = useCallback((updatedBlocks: Block[]) => {

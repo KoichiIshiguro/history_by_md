@@ -121,7 +121,11 @@ export default function Sidebar({
   useEffect(() => { setLocalTags(null); }, [tags]); // reset when parent tags change
   useEffect(() => {
     const handler = () => {
-      fetch("/api/tags").then((r) => r.ok ? r.json() : []).then((data) => setLocalTags(data));
+      console.log("[SIDEBAR] tags-changed event received, fetching tags...");
+      fetch("/api/tags").then((r) => r.ok ? r.json() : []).then((data) => {
+        console.log("[SIDEBAR] tags fetched:", data.length);
+        setLocalTags(data);
+      });
     };
     window.addEventListener("tags-changed", handler);
     return () => window.removeEventListener("tags-changed", handler);
