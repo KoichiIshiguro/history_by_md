@@ -116,6 +116,17 @@ export default function Sidebar({
     } catch {}
   }, []);
 
+  // Listen for tags changed event from BlockEditor — fetch directly, bypass MainApp
+  const [localTags, setLocalTags] = useState<Tag[] | null>(null);
+  useEffect(() => { setLocalTags(null); }, [tags]); // reset when parent tags change
+  useEffect(() => {
+    const handler = () => {
+      fetch("/api/tags").then((r) => r.ok ? r.json() : []).then((data) => setLocalTags(data));
+    };
+    window.addEventListener("tags-changed", handler);
+    return () => window.removeEventListener("tags-changed", handler);
+  }, []);
+
   // Auto-expand tree to show selected page
   useEffect(() => {
     if (!selectedPageId) return;
@@ -135,9 +146,10 @@ export default function Sidebar({
   }, [selectedPageId, pages]);
 
   const pageTree = buildPageTree(pages);
+  const effectiveTags = localTags ?? tags;
   const filteredTags = tagSearch
-    ? tags.filter((t) => t.name.toLowerCase().includes(tagSearch.toLowerCase()))
-    : tags;
+    ? effectiveTags.filter((t) => t.name.toLowerCase().includes(tagSearch.toLowerCase()))
+    : effectiveTags;
   const datesByMonth = groupDatesByMonth(dates);
 
   const toggleExpand = (id: string) => {

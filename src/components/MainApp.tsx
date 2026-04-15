@@ -500,8 +500,6 @@ export default function MainApp({ user, isAdmin }: Props) {
                 onTagClick={handleSelectTag}
                 onDateClick={handleSelectDate}
                 onDataChange={handleDataChange}
-                onTagsChange={handleTagsChange}
-                onActionChange={bumpActionVersion}
                 actionVersion={actionVersion}
               />
             )}

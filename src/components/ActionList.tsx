@@ -42,6 +42,13 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
 
   useEffect(() => { fetchActions(); }, [fetchActions, actionVersion]);
 
+  // Listen for actions-changed event from BlockEditor
+  useEffect(() => {
+    const handler = () => fetchActions();
+    window.addEventListener("actions-changed", handler);
+    return () => window.removeEventListener("actions-changed", handler);
+  }, [fetchActions]);
+
   const toggleAction = async (action: ActionBlock) => {
     const isDone = /^!done\s/i.test(action.content);
     const newContent = isDone

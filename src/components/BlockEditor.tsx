@@ -63,8 +63,6 @@ interface Props {
   onTagClick: (tagId: string, tagName: string) => void;
   onDateClick: (date: string) => void;
   onDataChange: () => void;
-  onTagsChange?: () => void;
-  onActionChange?: () => void;
   actionVersion?: number;
 }
 
@@ -225,7 +223,7 @@ export function MarkdownContent({
 function BlockEditorInner({
   viewMode, selectedDate, selectedPageId, selectedPageName,
   selectedTagId, selectedTagName, allPages, allTags,
-  onPageClick, onTagClick, onDateClick, onDataChange, onTagsChange, onActionChange, actionVersion,
+  onPageClick, onTagClick, onDateClick, onDataChange, actionVersion,
 }: Props) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [pageRefs, setPageRefs] = useState<Block[]>([]);
@@ -255,11 +253,6 @@ function BlockEditorInner({
   const undoStackRef = useRef<Block[][]>([]);
   const redoStackRef = useRef<Block[][]>([]);
   const editStartedAtRef = useRef<number>(0);
-  // Stable refs for parent callbacks — avoids useCallback dependency chains
-  const onTagsChangeRef = useRef(onTagsChange);
-  const onActionChangeRef = useRef(onActionChange);
-  onTagsChangeRef.current = onTagsChange;
-  onActionChangeRef.current = onActionChange;
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const debugLog = useCallback((msg: string) => {
     console.log(msg);
@@ -338,9 +331,9 @@ function BlockEditorInner({
         body: JSON.stringify({ date: selectedDate, blocks: updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i })) }),
       });
     }
-    // Notify sidebar via refs — no dependency chain, no re-render cascade
-    if (updatedBlocks.some((b) => /#[^\s#]+/.test(b.content))) onTagsChangeRef.current?.();
-    if (updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content))) onActionChangeRef.current?.();
+    // Notify sidebar directly via CustomEvent — bypasses MainApp state entirely
+    if (updatedBlocks.some((b) => /#[^\s#]+/.test(b.content))) window.dispatchEvent(new Event("tags-changed"));
+    if (updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content))) window.dispatchEvent(new Event("actions-changed"));
   }, [viewMode, selectedDate, selectedPageId, debugLog]);
 
   const debouncedSave = useCallback((updatedBlocks: Block[]) => {
