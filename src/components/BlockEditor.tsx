@@ -830,6 +830,36 @@ function BlockEditorInner({
       setDateRefs(dateRefs.map((b) => b.id === block.id ? updated : b));
       debouncedRefSave(updated);
     }
+    if (e.key === "Backspace") {
+      const textarea = e.currentTarget;
+      const cursorPos = textarea.selectionStart ?? 0;
+      if (cursorPos === 0 && (textarea.selectionEnd ?? 0) === 0) {
+        // Merge with previous block in same ref group
+        const isPageRef = pageRefs.some((b) => b.id === block.id);
+        const refList = isPageRef ? pageRefs : dateRefs;
+        const setRefList = isPageRef ? setPageRefs : setDateRefs;
+        const idx = refList.findIndex((b) => b.id === block.id);
+        if (idx > 0) {
+          e.preventDefault();
+          const prev = refList[idx - 1];
+          const merged = prev.content + editContent;
+          const updatedPrev = { ...prev, content: merged };
+          const newList = refList.filter((b) => b.id !== block.id);
+          newList[idx - 1] = updatedPrev;
+          setRefList(newList);
+          // Delete current block from server
+          fetch("/api/blocks", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: block.id }) });
+          debouncedRefSave(updatedPrev);
+          setEditContent(merged);
+          setEditingBlockId(prev.id);
+          setTimeout(() => {
+            const el = inputRefs.current.get(prev.id);
+            if (el) { el.focus(); el.selectionStart = el.selectionEnd = prev.content.length; }
+          }, 0);
+          return;
+        }
+      }
+    }
     if (e.key === "Enter") {
       const textarea = e.currentTarget;
       const cursorPos = textarea.selectionStart ?? 0;
@@ -955,12 +985,23 @@ function BlockEditorInner({
     onPageClick, onTagClick, onDateClick, onApplySuggestion: applySuggestion,
     onBlockMouseDown: isRef ? (() => {}) : handleBlockMouseDown,
     skipMouseUpRef,
-    onIndent: isRef ? undefined : (b: Block) => {
+    onIndent: isRef ? (b: Block) => {
+      const updated = { ...b, indent_level: b.indent_level + 1, content: editContent };
+      setPageRefs(pageRefs.map((bl) => bl.id === b.id ? updated : bl));
+      setDateRefs(dateRefs.map((bl) => bl.id === b.id ? updated : bl));
+      debouncedRefSave(updated);
+    } : (b: Block) => {
       pushUndo();
       const updated = blocks.map((bl) => bl.id === b.id ? { ...bl, indent_level: b.indent_level + 1, content: editContent } : bl);
       setBlocks(updated); debouncedSave(updated);
     },
-    onOutdent: isRef ? undefined : (b: Block) => {
+    onOutdent: isRef ? (b: Block) => {
+      if (b.indent_level <= 0) return;
+      const updated = { ...b, indent_level: b.indent_level - 1, content: editContent };
+      setPageRefs(pageRefs.map((bl) => bl.id === b.id ? updated : bl));
+      setDateRefs(dateRefs.map((bl) => bl.id === b.id ? updated : bl));
+      debouncedRefSave(updated);
+    } : (b: Block) => {
       if (b.indent_level <= 0) return;
       pushUndo();
       const updated = blocks.map((bl) => bl.id === b.id ? { ...bl, indent_level: b.indent_level - 1, content: editContent } : bl);
