@@ -266,8 +266,14 @@ function BlockEditorInner({
     fetch("/api/templates").then((r) => r.ok ? r.json() : []).then(setTemplates).catch(() => {});
   }, []);
 
+  // Track mount/unmount
+  useEffect(() => {
+    debugLog("BlockEditorInner MOUNTED");
+    return () => { console.log("[EDIT] BlockEditorInner UNMOUNTED"); };
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchBlocks = useCallback(async () => {
-    debugLog("fetchBlocks called");
+    debugLog("fetchBlocks called (dep changed)");
     setLoading(true);
     let url = "/api/blocks";
     if (viewMode === "page" && selectedPageId) {
