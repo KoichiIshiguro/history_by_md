@@ -15,6 +15,9 @@ export async function POST() {
   try {
     incrementUsage(userId, "sync");
     const result = await syncVectors(userId);
+    if (result.errors.length > 0) {
+      console.error("AI sync partial errors:", result.errors);
+    }
     return Response.json(result);
   } catch (e: any) {
     console.error("AI sync error:", e);

@@ -99,6 +99,7 @@ export default function AiChat() {
       if (data.embedded > 0) parts.push(`${data.embedded}チャンク埋め込み`);
       if (data.deleted > 0) parts.push(`${data.deleted}ブロック削除`);
       if (data.errors?.length > 0) parts.push(`${data.errors.length}件エラー`);
+      if (data.errors?.length > 0) console.error("AI sync errors:", data.errors);
       setSyncStatus(parts.length > 0 ? `完了: ${parts.join(", ")}` : "変更なし");
     } catch (e: any) {
       setSyncStatus(`エラー: ${e.message}`);
