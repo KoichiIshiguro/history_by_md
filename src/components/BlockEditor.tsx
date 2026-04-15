@@ -1304,7 +1304,7 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
               value={editContent.replace(/^!ai\s/i, "")}
               onChange={(e) => onEditContentChange("!ai " + e.target.value)}
               onBlur={onFinishEditing}
-              onKeyDown={(e) => onKeyDown(e, block, blockIndex)}
+              onKeyDown={(e) => onKeyDown(e as unknown as KeyboardEvent<HTMLTextAreaElement>, block, blockIndex)}
               placeholder="AIに指示を入力... (Enterで生成、Escでキャンセル)"
               className="flex-1 bg-transparent text-sm text-purple-900 outline-none placeholder:text-purple-300"
               autoFocus
