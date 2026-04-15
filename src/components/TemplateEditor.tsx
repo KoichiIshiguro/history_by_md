@@ -191,6 +191,14 @@ export default function TemplateEditor({
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>, block: TemplateBlock, blockIndex: number) => {
     if (e.key === "Shift") shiftHeldRef.current = true;
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
+    // Escape from !ai mode
+    if (e.key === "Escape" && /^!ai\s/i.test(editContent)) {
+      e.preventDefault();
+      setEditContent("");
+      return;
+    }
+
     const textarea = e.currentTarget;
     const cursorPos = textarea.selectionStart ?? 0;
     const meta = e.metaKey || e.ctrlKey;
@@ -480,6 +488,26 @@ export default function TemplateEditor({
                   </svg>
                   AI生成中...
                   <button onClick={() => setAiGenerating(null)} className="ml-2 text-xs text-red-400 hover:text-red-600">キャンセル</button>
+                </div>
+              ) : isEditing && /^!ai\s/i.test(editContent) ? (
+                <div className="relative flex-1">
+                  <div className="flex items-center gap-2 rounded-lg border border-purple-300 bg-purple-50 px-3 py-1.5">
+                    <svg className="h-4 w-4 text-purple-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <span className="text-xs font-medium text-purple-600 flex-shrink-0">AI</span>
+                    <input
+                      ref={(el) => { if (el) { setInputRef(block.id, el as any); el.focus(); } }}
+                      type="text"
+                      value={editContent.replace(/^!ai\s/i, "")}
+                      onChange={(e) => handleContentChange("!ai " + e.target.value)}
+                      onBlur={() => { blurTimeoutRef.current = setTimeout(finishEditing, 150); }}
+                      onKeyDown={(e) => handleKeyDown(e as any, block, i)}
+                      placeholder="AIに指示を入力... (Enterで生成、Escでキャンセル)"
+                      className="flex-1 bg-transparent text-sm text-purple-900 outline-none placeholder:text-purple-300"
+                      autoFocus
+                    />
+                  </div>
                 </div>
               ) : isEditing ? (
                 <div className="relative flex-1">
