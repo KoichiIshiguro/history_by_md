@@ -451,8 +451,19 @@ export default function BlockEditor({
     if (!e.shiftKey) { clearSelection(); setSelectionAnchor(blockIndex); }
   }, [editingBlockId, editContent, blocks, selectionAnchor, selectRange, clearSelection, debouncedSave]);
 
+  const autoResizeTextarea = (el: HTMLTextAreaElement) => {
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  };
+
   const setInputRef = (id: string, el: HTMLTextAreaElement | null) => {
-    if (el) inputRefs.current.set(id, el); else inputRefs.current.delete(id);
+    if (el) {
+      inputRefs.current.set(id, el);
+      // Auto-resize on mount
+      requestAnimationFrame(() => autoResizeTextarea(el));
+    } else {
+      inputRefs.current.delete(id);
+    }
   };
 
   const focusBlock = (blockId: string, cursorPos?: number) => {
@@ -1276,12 +1287,12 @@ function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, show
       {isEditing ? (
         <div className="relative flex-1">
           <textarea ref={(el) => setInputRef(block.id, el)}
-            value={editContent} onChange={(e) => onEditContentChange(e.target.value)}
+            value={editContent} onChange={(e) => { onEditContentChange(e.target.value); requestAnimationFrame(() => { const ta = e.target as HTMLTextAreaElement; if (ta) { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; } }); }}
             onBlur={onFinishEditing}
             onKeyDown={(e) => onKeyDown(e, block, blockIndex)}
             onPaste={onPaste ? (e) => onPaste(e, block, blockIndex) : undefined}
-            className="block-line w-full resize-none border-none bg-blue-50 p-1 text-sm outline-none rounded leading-snug"
-            rows={Math.max(1, editContent.split("\n").length)} autoFocus />
+            className="block-line w-full resize-none border-none bg-blue-50 p-1 text-sm outline-none rounded leading-snug overflow-hidden"
+            rows={1} autoFocus />
           {showSuggestions && (
             <div className="absolute left-0 top-full z-10 mt-1 min-w-56 max-w-md rounded border border-gray-200 bg-white shadow-lg">
               {suggestions.items.map((item, i) => (
