@@ -47,6 +47,8 @@ export default function TemplateEditor({
   const [addingNew, setAddingNew] = useState(false);
   const [newName, setNewName] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Template | null>(null);
+  const [aiGenerating, setAiGenerating] = useState<string | null>(null);
+  const [aiResult, setAiResult] = useState<{ blockId: string; text: string } | null>(null);
   const inputRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -108,8 +110,18 @@ export default function TemplateEditor({
     saveTemplate(snapshot);
   }, [blocks, saveTemplate]);
 
+  const autoResizeTextarea = (el: HTMLTextAreaElement) => {
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  };
+
   const setInputRef = (id: string, el: HTMLTextAreaElement | null) => {
-    if (el) inputRefs.current.set(id, el); else inputRefs.current.delete(id);
+    if (el) {
+      inputRefs.current.set(id, el);
+      requestAnimationFrame(() => autoResizeTextarea(el));
+    } else {
+      inputRefs.current.delete(id);
+    }
   };
 
   const focusBlock = (blockId: string, cursorPos?: number) => {
@@ -135,6 +147,10 @@ export default function TemplateEditor({
 
   const finishEditing = () => {
     if (!editingBlockId) return;
+    if (aiGenerating || aiResult) {
+      setEditingBlockId(null);
+      return;
+    }
     const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
     setBlocks(updated); setEditingBlockId(null);
     saveTemplate(updated);
@@ -186,6 +202,40 @@ export default function TemplateEditor({
       const lines = editContent.slice(0, cursorPos).split("\n");
       const openFences = lines.filter((l) => l.trimStart().startsWith("```")).length;
       if (openFences % 2 === 1) return;
+
+      // !ai prompt detection
+      const aiMatch = editContent.match(/^!ai\s+(.+)$/i);
+      if (aiMatch) {
+        e.preventDefault();
+        const prompt = aiMatch[1];
+        setAiGenerating(block.id);
+        const contextLines = blocks
+          .slice(Math.max(0, blockIndex - 3), blockIndex)
+          .map((b) => b.content)
+          .filter(Boolean)
+          .join("\n");
+        fetch("/api/ai/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, context: contextLines }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.error) {
+              setAiGenerating(null);
+              alert(`AI生成エラー: ${data.error}`);
+              return;
+            }
+            setAiGenerating(null);
+            setAiResult({ blockId: block.id, text: data.text });
+          })
+          .catch((err) => {
+            setAiGenerating(null);
+            alert(`AI生成エラー: ${err.message}`);
+          });
+        return;
+      }
+
       e.preventDefault();
       pushUndo();
       const before = editContent.slice(0, cursorPos);
@@ -422,17 +472,26 @@ export default function TemplateEditor({
               style={{ paddingLeft: `${indent}px` }}
               onMouseUp={() => { if (!isEditing) startEditing(block); }}
             >
-              {isEditing ? (
+              {aiGenerating === block.id ? (
+                <div className="flex items-center gap-2 p-1 text-sm text-gray-500">
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                  AI生成中...
+                  <button onClick={() => setAiGenerating(null)} className="ml-2 text-xs text-red-400 hover:text-red-600">キャンセル</button>
+                </div>
+              ) : isEditing ? (
                 <div className="relative flex-1">
                   <textarea
                     ref={(el) => setInputRef(block.id, el)}
                     value={editContent}
-                    onChange={(e) => handleContentChange(e.target.value)}
+                    onChange={(e) => { handleContentChange(e.target.value); requestAnimationFrame(() => { const ta = e.target as HTMLTextAreaElement; if (ta) { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; } }); }}
                     onBlur={() => { blurTimeoutRef.current = setTimeout(finishEditing, 150); }}
                     onKeyDown={(e) => handleKeyDown(e, block, i)}
                     onPaste={(e) => handlePaste(e, block, i)}
-                    className="block-line w-full resize-none border-none bg-blue-50 p-1 text-sm outline-none rounded leading-snug"
-                    rows={Math.max(1, editContent.split("\n").length)}
+                    className="block-line w-full resize-none border-none bg-blue-50 p-1 text-sm outline-none rounded leading-snug overflow-hidden"
+                    rows={1}
                     autoFocus
                   />
                 </div>
@@ -451,6 +510,54 @@ export default function TemplateEditor({
           <div className="py-4 cursor-text text-sm text-gray-300 min-h-[2em]" onClick={addNewBlock}>&nbsp;</div>
         )}
       </div>
+
+      {/* AI generation result modal */}
+      {aiResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="mx-4 w-full max-w-lg rounded-xl bg-white p-5 shadow-xl">
+            <h3 className="mb-3 text-sm font-semibold text-gray-700">AI生成結果</h3>
+            <div className="mb-4 max-h-64 overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm whitespace-pre-wrap">
+              {aiResult.text}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setAiResult(null)}
+                className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={() => {
+                  pushUndo();
+                  const lines = aiResult.text.split("\n");
+                  const blockIndex = blocks.findIndex((b) => b.id === aiResult.blockId);
+                  if (blockIndex === -1) { setAiResult(null); return; }
+                  const block = blocks[blockIndex];
+                  const updated = blocks.map((b) => b.id === block.id ? { ...b, content: lines[0] } : b);
+                  const newBlocks: TemplateBlock[] = [];
+                  for (let i = 1; i < lines.length; i++) {
+                    if (lines[i] === "" && i < lines.length - 1) continue;
+                    newBlocks.push({
+                      id: crypto.randomUUID(),
+                      content: lines[i],
+                      indent_level: block.indent_level,
+                    });
+                  }
+                  if (newBlocks.length > 0) updated.splice(blockIndex + 1, 0, ...newBlocks);
+                  setBlocks(updated);
+                  setEditContent(lines[0]);
+                  setEditingBlockId(block.id);
+                  saveTemplate(updated);
+                  setAiResult(null);
+                }}
+                className="rounded-lg bg-theme-500 px-4 py-2 text-sm text-white hover:bg-theme-600"
+              >
+                挿入
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
