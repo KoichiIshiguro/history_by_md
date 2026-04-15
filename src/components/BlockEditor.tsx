@@ -262,6 +262,7 @@ function BlockEditorInner({
   }, []);
 
   const fetchBlocks = useCallback(async () => {
+    console.log("[EDIT] fetchBlocks called", new Error().stack?.split("\n").slice(1, 4).join(" ← "));
     setLoading(true);
     let url = "/api/blocks";
     if (viewMode === "page" && selectedPageId) {
@@ -500,6 +501,7 @@ function BlockEditorInner({
   };
 
   const startEditing = (block: Block) => {
+    console.log("[EDIT] startEditing called", block.id, "current editingBlockId:", editingBlockId);
     if (selectedBlockIds.size > 0) return;
     if (blurTimeoutRef.current) { clearTimeout(blurTimeoutRef.current); blurTimeoutRef.current = null; }
     // Push undo snapshot when starting to edit a new block
@@ -524,9 +526,10 @@ function BlockEditorInner({
   };
 
   const finishEditing = () => {
-    if (!editingBlockId) return;
+    console.log("[EDIT] finishEditing called", "editingBlockId:", editingBlockId, "elapsed:", Date.now() - editStartedAtRef.current, "ms");
+    if (!editingBlockId) { console.log("[EDIT] finishEditing: no editingBlockId, skip"); return; }
     // Ignore blur that fires immediately after entering edit mode (mobile keyboard layout shift)
-    if (Date.now() - editStartedAtRef.current < 500) return;
+    if (Date.now() - editStartedAtRef.current < 500) { console.log("[EDIT] finishEditing: too soon after startEditing, skip"); return; }
     // Don't save during AI generation or when AI result is pending — the !ai content should not overwrite anything
     if (aiGenerating || aiResult) {
       setEditingBlockId(null); setShowSuggestions(false);
@@ -945,7 +948,7 @@ function BlockEditorInner({
     allPages, allTags,
     setInputRef, onStartEditing: startEditing,
     onEditContentChange: handleContentChange,
-    onFinishEditing: () => { blurTimeoutRef.current = setTimeout(finishEditing, 150); },
+    onFinishEditing: () => { console.log("[EDIT] onBlur fired, scheduling finishEditing in 150ms"); blurTimeoutRef.current = setTimeout(finishEditing, 150); },
     onKeyDown: isRef ? ((e: KeyboardEvent<HTMLTextAreaElement>, b: Block, _i: number) => handleRefKeyDown(e, b)) : handleKeyDown,
     onPaste: isRef ? undefined : handlePaste,
     onPageClick, onTagClick, onDateClick, onApplySuggestion: applySuggestion,
