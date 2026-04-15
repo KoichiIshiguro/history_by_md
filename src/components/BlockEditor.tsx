@@ -254,7 +254,6 @@ function BlockEditorInner({
   const [newChildPageName, setNewChildPageName] = useState("");
   const undoStackRef = useRef<Block[][]>([]);
   const redoStackRef = useRef<Block[][]>([]);
-  const lastSavedBlocksRef = useRef<Block[]>([]);
   const editStartedAtRef = useRef<number>(0);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const debugLog = useCallback((msg: string) => {
@@ -288,17 +287,17 @@ function BlockEditorInner({
       const data = await res.json();
       if (viewMode === "page" && data.pageBlocks !== undefined) {
         setBlocks(data.pageBlocks);
-        lastSavedBlocksRef.current = data.pageBlocks;
+
         setPageRefs(data.pageRefs || []);
         setDateRefs(data.dateRefs || []);
       } else if (viewMode === "tag") {
         setBlocks(data);
-        lastSavedBlocksRef.current = data;
+
         setPageRefs([]);
         setDateRefs([]);
       } else {
         setBlocks(data);
-        lastSavedBlocksRef.current = data;
+
         setPageRefs([]);
         setDateRefs([]);
       }
@@ -313,7 +312,9 @@ function BlockEditorInner({
     if (actionVersion && actionVersion > 0) { debugLog(`useEffect[actionVersion=${actionVersion}] triggered`); fetchBlocks(); }
   }, [actionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Save blocks to API only — no state updates, no re-fetches, no parent callbacks
   const saveBlocks = useCallback(async (updatedBlocks: Block[]) => {
+    debugLog("saveBlocks: saving to API");
     if (viewMode === "page" && selectedPageId) {
       await fetch("/api/blocks/save", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -332,23 +333,7 @@ function BlockEditorInner({
         body: JSON.stringify({ date: selectedDate, blocks: updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i })) }),
       });
     }
-    // Only refresh tags if tag content changed (not full onDataChange)
-    const extractTags = (bls: Block[]) => {
-      const tags = new Set<string>();
-      for (const b of bls) for (const m of b.content.matchAll(/#([^\s#]+)/g)) tags.add(m[1]);
-      return tags;
-    };
-    const oldTags = extractTags(lastSavedBlocksRef.current);
-    const newTags = extractTags(updatedBlocks);
-    const tagsChanged = oldTags.size !== newTags.size || [...newTags].some((t) => !oldTags.has(t)) || [...oldTags].some((t) => !newTags.has(t));
-    debugLog(`saveBlocks: old=${[...oldTags].join(",")} new=${[...newTags].join(",")} changed=${tagsChanged}`);
-    if (tagsChanged && onTagsChange) { debugLog("saveBlocks: calling onTagsChange"); onTagsChange(); }
-    lastSavedBlocksRef.current = updatedBlocks;
-
-    if (onActionChange && updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content))) {
-      onActionChange();
-    }
-  }, [viewMode, selectedDate, selectedPageId, onTagsChange, onActionChange]);
+  }, [viewMode, selectedDate, selectedPageId, debugLog]);
 
   const debouncedSave = useCallback((updatedBlocks: Block[]) => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -363,10 +348,8 @@ function BlockEditorInner({
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: block.id, content: block.content, indent_level: block.indent_level, sort_order: block.sort_order }),
       });
-      // Only refresh tags if tag content might have changed
-      if (onTagsChange && /#/.test(block.content)) onTagsChange();
     }, 800);
-  }, [onTagsChange]);
+  }, []);
 
   const pushUndo = useCallback(() => {
     undoStackRef.current.push(blocks.map((b) => ({ ...b })));
