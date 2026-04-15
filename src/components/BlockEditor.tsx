@@ -255,6 +255,11 @@ function BlockEditorInner({
   const undoStackRef = useRef<Block[][]>([]);
   const redoStackRef = useRef<Block[][]>([]);
   const editStartedAtRef = useRef<number>(0);
+  // Stable refs for parent callbacks — avoids useCallback dependency chains
+  const onTagsChangeRef = useRef(onTagsChange);
+  const onActionChangeRef = useRef(onActionChange);
+  onTagsChangeRef.current = onTagsChange;
+  onActionChangeRef.current = onActionChange;
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const debugLog = useCallback((msg: string) => {
     console.log(msg);
@@ -312,7 +317,7 @@ function BlockEditorInner({
     if (actionVersion && actionVersion > 0) { debugLog(`useEffect[actionVersion=${actionVersion}] triggered`); fetchBlocks(); }
   }, [actionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Save blocks to API only — no state updates, no re-fetches, no parent callbacks
+  // Save blocks to API, then notify sidebar via stable refs (no dependency chain)
   const saveBlocks = useCallback(async (updatedBlocks: Block[]) => {
     debugLog("saveBlocks: saving to API");
     if (viewMode === "page" && selectedPageId) {
@@ -333,6 +338,9 @@ function BlockEditorInner({
         body: JSON.stringify({ date: selectedDate, blocks: updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i })) }),
       });
     }
+    // Notify sidebar via refs — no dependency chain, no re-render cascade
+    if (updatedBlocks.some((b) => /#[^\s#]+/.test(b.content))) onTagsChangeRef.current?.();
+    if (updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content))) onActionChangeRef.current?.();
   }, [viewMode, selectedDate, selectedPageId, debugLog]);
 
   const debouncedSave = useCallback((updatedBlocks: Block[]) => {
