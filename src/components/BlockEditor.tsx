@@ -254,11 +254,22 @@ function BlockEditorInner({
   const redoStackRef = useRef<Block[][]>([]);
   const editStartedAtRef = useRef<number>(0);
 
+  // Keep refs in sync with latest state to avoid stale closures in setTimeout callbacks
+  const editContentRef = useRef(editContent);
+  editContentRef.current = editContent;
+  const editingBlockIdRef = useRef(editingBlockId);
+  editingBlockIdRef.current = editingBlockId;
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
+  const pageRefsRef = useRef(pageRefs);
+  pageRefsRef.current = pageRefs;
+  const dateRefsRef = useRef(dateRefs);
+  dateRefsRef.current = dateRefs;
+
   useEffect(() => {
     fetch("/api/templates").then((r) => r.ok ? r.json() : []).then(setTemplates).catch(() => {});
   }, []);
 
-  // Track mount/unmount
   const fetchBlocks = useCallback(async () => {
     setLoading(true);
     let url = "/api/blocks";
@@ -490,17 +501,22 @@ function BlockEditorInner({
     if (selectedBlockIds.size > 0) return;
     if (blurTimeoutRef.current) { clearTimeout(blurTimeoutRef.current); blurTimeoutRef.current = null; }
     // Push undo snapshot when starting to edit a new block
-    if (!editingBlockId || editingBlockId !== block.id) pushUndo();
-    // Save current editing block before switching
-    if (editingBlockId && editingBlockId !== block.id) {
-      const refBlock = [...pageRefs, ...dateRefs].find((b) => b.id === editingBlockId);
+    const currentEditingId = editingBlockIdRef.current;
+    const currentContent = editContentRef.current;
+    if (!currentEditingId || currentEditingId !== block.id) pushUndo();
+    // Save current editing block before switching (use refs for latest values)
+    if (currentEditingId && currentEditingId !== block.id) {
+      const currentPageRefs = pageRefsRef.current;
+      const currentDateRefs = dateRefsRef.current;
+      const currentBlocks = blocksRef.current;
+      const refBlock = [...currentPageRefs, ...currentDateRefs].find((b) => b.id === currentEditingId);
       if (refBlock) {
-        const updated = { ...refBlock, content: editContent };
-        setPageRefs(pageRefs.map((b) => b.id === editingBlockId ? updated : b));
-        setDateRefs(dateRefs.map((b) => b.id === editingBlockId ? updated : b));
+        const updated = { ...refBlock, content: currentContent };
+        setPageRefs(currentPageRefs.map((b) => b.id === currentEditingId ? updated : b));
+        setDateRefs(currentDateRefs.map((b) => b.id === currentEditingId ? updated : b));
         debouncedRefSave(updated);
       } else {
-        const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+        const updated = currentBlocks.map((b) => b.id === currentEditingId ? { ...b, content: currentContent } : b);
         setBlocks(updated);
         debouncedSave(updated);
       }
@@ -510,8 +526,15 @@ function BlockEditorInner({
     setTimeout(() => { inputRefs.current.get(block.id)?.focus(); }, 0);
   };
 
-  const finishEditing = () => {
-    if (!editingBlockId) return;
+  const finishEditing = useCallback(() => {
+    // Read from refs to always get latest values (avoids stale closures in setTimeout)
+    const currentEditingId = editingBlockIdRef.current;
+    const currentContent = editContentRef.current;
+    const currentBlocks = blocksRef.current;
+    const currentPageRefs = pageRefsRef.current;
+    const currentDateRefs = dateRefsRef.current;
+
+    if (!currentEditingId) return;
     // Ignore blur that fires immediately after entering edit mode (mobile keyboard layout shift)
     if (Date.now() - editStartedAtRef.current < 500) return;
     // Don't save during AI generation or when AI result is pending — the !ai content should not overwrite anything
@@ -519,20 +542,20 @@ function BlockEditorInner({
       setEditingBlockId(null); setShowSuggestions(false);
       return;
     }
-    const refBlock = [...pageRefs, ...dateRefs].find((b) => b.id === editingBlockId);
+    const refBlock = [...currentPageRefs, ...currentDateRefs].find((b) => b.id === currentEditingId);
     if (refBlock) {
-      const updated = { ...refBlock, content: editContent };
-      setPageRefs(pageRefs.map((b) => b.id === editingBlockId ? updated : b));
-      setDateRefs(dateRefs.map((b) => b.id === editingBlockId ? updated : b));
+      const updated = { ...refBlock, content: currentContent };
+      setPageRefs(currentPageRefs.map((b) => b.id === currentEditingId ? updated : b));
+      setDateRefs(currentDateRefs.map((b) => b.id === currentEditingId ? updated : b));
       setEditingBlockId(null); setShowSuggestions(false);
       debouncedRefSave(updated); return;
     }
     // Create new object only for edited block — React.memo skips unchanged blocks
-    const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+    const updated = currentBlocks.map((b) => b.id === currentEditingId ? { ...b, content: currentContent } : b);
     setBlocks(updated);
     debouncedSave(updated);
     setEditingBlockId(null); setShowSuggestions(false);
-  };
+  }, [aiGenerating, aiResult, debouncedSave, debouncedRefSave]);
 
   const handleContentChange = (value: string) => {
     // Strip newlines unless Shift is held (Shift+Enter = intentional newline)
