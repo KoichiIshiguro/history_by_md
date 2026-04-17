@@ -44,3 +44,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Screenshots and recordings
+*.MP4
+*.mov
+スクリーンショット*.png
+図*.png
+.claude/
+project-note-*.md
