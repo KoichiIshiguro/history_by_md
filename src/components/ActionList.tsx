@@ -2,16 +2,27 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { MarkdownContent, PageInfo, TagInfo } from "./BlockEditor";
+import GanttView from "./GanttView";
 
-interface ActionBlock {
+export interface ActionBlock {
   id: string;
   content: string;
   indent_level: number;
   sort_order: number;
   date: string;
   page_id?: string | null;
+  due_start?: string | null;
+  due_end?: string | null;
   linkedPages?: { id: string; name: string }[];
   children: { id: string; content: string; indent_level: number; sort_order: number; date: string }[];
+}
+
+export interface ActionGroup {
+  key: string;
+  label: string;
+  isPage: boolean;
+  pageId: string;
+  actions: ActionBlock[];
 }
 
 interface Props {
@@ -25,10 +36,77 @@ interface Props {
   actionVersion?: number;
 }
 
+/**
+ * Group actions: page_id or linkedPages → page group; else → date group.
+ * Returns groups sorted: date groups (desc) first, then pages (alphabetical).
+ */
+export function groupActions(actions: ActionBlock[], allPages: PageInfo[]): ActionGroup[] {
+  const grouped: Record<string, ActionGroup> = {};
+  for (const action of actions) {
+    let pid: string | null = null;
+    let pname: string | null = null;
+    if (action.page_id) {
+      pid = action.page_id;
+      const page = allPages.find((p) => p.id === pid);
+      pname = page?.full_path || page?.name || "不明なページ";
+    } else if (action.linkedPages && action.linkedPages.length > 0) {
+      pid = action.linkedPages[0].id;
+      const page = allPages.find((p) => p.id === pid);
+      pname = page?.full_path || action.linkedPages[0].name;
+    }
+    if (pid) {
+      const key = `page:${pid}`;
+      if (!grouped[key]) grouped[key] = { key, label: pname!, isPage: true, pageId: pid, actions: [] };
+      grouped[key].actions.push(action);
+    } else {
+      const key = action.date || "日付なし";
+      if (!grouped[key]) grouped[key] = { key, label: key, isPage: false, pageId: "", actions: [] };
+      grouped[key].actions.push(action);
+    }
+  }
+  return Object.values(grouped).sort((a, b) => {
+    if (a.isPage && !b.isPage) return 1;
+    if (!a.isPage && b.isPage) return -1;
+    if (a.isPage && b.isPage) return a.label.localeCompare(b.label);
+    return b.label.localeCompare(a.label);
+  });
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Return Tailwind color classes for a due date relative to today. */
+export function dueColor(dueEnd: string | null | undefined, isDone: boolean): string {
+  if (isDone) return "text-gray-400";
+  if (!dueEnd) return "text-gray-500";
+  const today = todayStr();
+  if (dueEnd < today) return "text-red-600";
+  if (dueEnd === today) return "text-orange-600";
+  return "text-gray-500";
+}
+
+/** Format a due range as a compact pill string: "4/29" or "4/17-29" or "4/17-5/1" or "2026/12/28-2027/1/5" */
+export function formatDuePill(dueStart: string | null | undefined, dueEnd: string | null | undefined): string {
+  if (!dueStart || !dueEnd) return "";
+  const [sy, sm, sd] = dueStart.split("-").map((n) => parseInt(n, 10));
+  const [ey, em, ed] = dueEnd.split("-").map((n) => parseInt(n, 10));
+  const thisYear = new Date().getFullYear();
+  const omitStartYear = sy === thisYear;
+  const startFmt = omitStartYear ? `${sm}/${sd}` : `${sy}/${sm}/${sd}`;
+  if (dueStart === dueEnd) return startFmt;
+  if (sy === ey && sm === em) return `${startFmt}-${ed}`;
+  if (sy === ey) return `${startFmt}-${em}/${ed}`;
+  const endFmt = `${ey}/${em}/${ed}`;
+  return omitStartYear ? `${sy}/${sm}/${sd}-${endFmt}` : `${startFmt}-${endFmt}`;
+}
+
 export default function ActionList({ pageId, allPages, allTags, onPageClick, onTagClick, onDateClick, onActionChange, actionVersion }: Props) {
   const [actions, setActions] = useState<ActionBlock[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState<"list" | "gantt">("list");
 
   const fetchActions = useCallback(async () => {
     setLoading(true);
@@ -42,7 +120,6 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
 
   useEffect(() => { fetchActions(); }, [fetchActions, actionVersion]);
 
-  // Listen for actions-changed event from BlockEditor
   useEffect(() => {
     const handler = () => fetchActions();
     window.addEventListener("actions-changed", handler);
@@ -50,10 +127,10 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
   }, [fetchActions]);
 
   const toggleAction = async (action: ActionBlock) => {
-    const isDone = /^!done\s/i.test(action.content);
+    const isDone = /^!done/i.test(action.content);
     const newContent = isDone
-      ? action.content.replace(/^!done\s/i, "!action ")
-      : action.content.replace(/^!action\s/i, "!done ");
+      ? action.content.replace(/^!done/i, "!action")
+      : action.content.replace(/^!action/i, "!done");
     await fetch("/api/actions", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -63,36 +140,33 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
     if (onActionChange) onActionChange();
   };
 
-  // Group: page-based actions by page, date-based actions by date
-  const grouped: Record<string, { label: string; isPage: boolean; pageId: string; actions: ActionBlock[] }> = {};
-  for (const action of actions) {
-    if (action.page_id) {
-      const key = `page:${action.page_id}`;
-      if (!grouped[key]) {
-        const page = allPages.find((p) => p.id === action.page_id);
-        grouped[key] = { label: page?.full_path || page?.name || "不明なページ", isPage: true, pageId: action.page_id, actions: [] };
-      }
-      grouped[key].actions.push(action);
-    } else {
-      const key = action.date || "日付なし";
-      if (!grouped[key]) grouped[key] = { label: key, isPage: false, pageId: "", actions: [] };
-      grouped[key].actions.push(action);
-    }
-  }
-  // Sort: dates (desc) first, then pages (alphabetical)
-  const sortedGroups = Object.entries(grouped).sort(([, a], [, b]) => {
-    if (a.isPage && !b.isPage) return 1;
-    if (!a.isPage && b.isPage) return -1;
-    if (a.isPage && b.isPage) return a.label.localeCompare(b.label);
-    return b.label.localeCompare(a.label);
-  });
+  const compact = !!pageId;
+  const sortedGroups = groupActions(actions, allPages);
 
-  const compact = !!pageId; // compact mode for sidebar
+  // Strip "!action" / "!done" prefix and optional @-spec for display
+  const displayContent = (content: string) => content.replace(/^!(action|done)(@\S+)?\s+/i, "");
 
   return (
-    <div className={compact ? "" : "mx-auto max-w-3xl"}>
-      <div className="flex items-center gap-2 mb-3">
-        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+    <div className={compact ? "" : "mx-auto max-w-5xl"}>
+      {/* Tabs + filters */}
+      <div className="flex items-center gap-3 mb-3 border-b border-gray-200">
+        {!compact && (
+          <div className="flex">
+            <button
+              onClick={() => setTab("list")}
+              className={`px-3 py-1.5 text-sm border-b-2 transition ${tab === "list" ? "border-theme-500 text-theme-600 font-medium" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+            >
+              一覧
+            </button>
+            <button
+              onClick={() => setTab("gantt")}
+              className={`px-3 py-1.5 text-sm border-b-2 transition ${tab === "gantt" ? "border-theme-500 text-theme-600 font-medium" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+            >
+              ガント
+            </button>
+          </div>
+        )}
+        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none ml-auto pb-1">
           <input
             type="checkbox"
             checked={showCompleted}
@@ -101,7 +175,7 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
           />
           完了済みも表示
         </label>
-        <span className="text-xs text-gray-400">{actions.length}件</span>
+        <span className="text-xs text-gray-400 pb-1">{actions.length}件</span>
       </div>
 
       {loading ? (
@@ -110,25 +184,31 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
         <div className="text-sm text-gray-400 py-4">
           {showCompleted ? "アクションはありません" : "未完了のアクションはありません"}
         </div>
+      ) : tab === "gantt" && !compact ? (
+        <GanttView
+          groups={sortedGroups}
+          allPages={allPages}
+          onPageClick={onPageClick}
+          onDateClick={onDateClick}
+          onActionChange={() => { fetchActions(); if (onActionChange) onActionChange(); }}
+        />
       ) : (
-        sortedGroups.map(([key, group]) => (
-          <div key={key} className="mb-4">
+        sortedGroups.map((group) => (
+          <div key={group.key} className="mb-4">
             <div
               className="text-xs font-medium text-gray-500 mb-1.5 cursor-pointer hover:text-blue-600"
               onClick={() => {
-                if (group.isPage) {
-                  onPageClick(group.pageId, group.label);
-                } else if (group.label !== "日付なし") {
-                  onDateClick(group.label);
-                }
+                if (group.isPage) onPageClick(group.pageId, group.label);
+                else if (group.label !== "日付なし") onDateClick(group.label);
               }}
             >
               {group.isPage ? <span className="page-link">{group.label}</span> : group.label}
             </div>
             <div className="space-y-1">
               {group.actions.map((action) => {
-                const isDone = /^!done\s/i.test(action.content);
-                const displayContent = action.content.replace(/^!(action|done)\s/i, "");
+                const isDone = /^!done/i.test(action.content);
+                const pillText = formatDuePill(action.due_start, action.due_end);
+                const pillColor = dueColor(action.due_end, isDone);
                 return (
                   <div key={action.id} className={`rounded border ${isDone ? "border-green-200 bg-green-50/50" : "border-amber-200 bg-amber-50/50"} p-2`}>
                     <div className="flex items-start gap-2">
@@ -149,8 +229,13 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
                           }
                         }}
                       >
+                        {pillText && (
+                          <span className={`inline-flex items-center gap-1 mr-2 rounded bg-white/70 border border-current/20 px-1.5 py-0.5 text-xs font-medium ${pillColor}`}>
+                            📅 {pillText}
+                          </span>
+                        )}
                         <MarkdownContent
-                          content={displayContent}
+                          content={displayContent(action.content)}
                           allPages={allPages}
                           allTags={allTags}
                           onPageClick={onPageClick}
