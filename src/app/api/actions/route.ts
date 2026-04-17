@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { parseAction, todayISO } from "@/lib/actionDate";
 import { NextRequest } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest) {
     const placeholders = allPageIds.map(() => "?").join(",");
     const actions = db
       .prepare(
-        `SELECT DISTINCT b.id, b.content, b.indent_level, b.sort_order, b.date, b.page_id
+        `SELECT DISTINCT b.id, b.content, b.indent_level, b.sort_order, b.date, b.page_id, b.due_start, b.due_end
          FROM blocks b
          JOIN block_pages bp ON bp.block_id = b.id
          WHERE bp.page_id IN (${placeholders}) AND b.user_id = ? AND ${contentFilter}
@@ -64,7 +65,7 @@ export async function GET(request: NextRequest) {
     // Also include actions directly on descendant pages (page_id column)
     const directActions = db
       .prepare(
-        `SELECT b.id, b.content, b.indent_level, b.sort_order, b.date, b.page_id
+        `SELECT b.id, b.content, b.indent_level, b.sort_order, b.date, b.page_id, b.due_start, b.due_end
          FROM blocks b
          WHERE b.page_id IN (${placeholders}) AND b.user_id = ? AND ${contentFilter}
          ORDER BY b.date DESC, b.sort_order ASC`
@@ -97,10 +98,10 @@ export async function GET(request: NextRequest) {
   // All actions across all dates/pages
   const actions = db
     .prepare(
-      `SELECT b.id, b.content, b.indent_level, b.sort_order, b.date, b.page_id
+      `SELECT b.id, b.content, b.indent_level, b.sort_order, b.date, b.page_id, b.due_start, b.due_end
        FROM blocks b
        WHERE b.user_id = ? AND ${contentFilter}
-       ORDER BY b.date DESC, b.sort_order ASC`
+       ORDER BY b.due_start ASC, b.date DESC, b.sort_order ASC`
     )
     .all(user.id);
 
@@ -128,8 +129,14 @@ export async function PUT(request: NextRequest) {
   const db = getDb();
   const { blockId, content } = await request.json();
 
-  db.prepare("UPDATE blocks SET content = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
-    .run(content, blockId, user.id);
+  // Look up the block's date for parser fallback
+  const existing = db.prepare("SELECT date FROM blocks WHERE id = ? AND user_id = ?").get(blockId, user.id) as { date: string } | undefined;
+  const meta = parseAction(content, existing?.date || todayISO());
+  const dueStart = meta.isAction ? meta.dueStart : null;
+  const dueEnd = meta.isAction ? meta.dueEnd : null;
+
+  db.prepare("UPDATE blocks SET content = ?, due_start = ?, due_end = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
+    .run(content, dueStart, dueEnd, blockId, user.id);
 
   return Response.json({ ok: true });
 }

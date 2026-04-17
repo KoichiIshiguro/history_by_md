@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { parseAction, todayISO } from "@/lib/actionDate";
 import { NextRequest } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -102,11 +103,17 @@ export async function PUT(request: NextRequest) {
     return Response.json({ error: "Block not found" }, { status: 404 });
   }
 
+  // Compute due dates from content (default: block.date for date blocks, today for page blocks)
+  const meta = parseAction(content, block.date || todayISO());
+  const dueStart = meta.isAction ? meta.dueStart : null;
+  const dueEnd = meta.isAction ? meta.dueEnd : null;
+
   const updateTransaction = db.transaction(() => {
     db.prepare(
-      `UPDATE blocks SET content = ?, indent_level = ?, sort_order = ?, updated_at = datetime('now')
+      `UPDATE blocks SET content = ?, indent_level = ?, sort_order = ?,
+                         due_start = ?, due_end = ?, updated_at = datetime('now')
        WHERE id = ? AND user_id = ?`
-    ).run(content, indent_level || 0, sort_order || 0, id, user.id);
+    ).run(content, indent_level || 0, sort_order || 0, dueStart, dueEnd, id, user.id);
 
     // Recompute tags and page refs for this block's context
     if (!block.page_id && block.date) {
@@ -130,10 +137,15 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const { id, content, indent_level, sort_order, date, page_id } = body;
 
+  // Compute due dates from content
+  const meta = parseAction(content || "", date || todayISO());
+  const dueStart = meta.isAction ? meta.dueStart : null;
+  const dueEnd = meta.isAction ? meta.dueEnd : null;
+
   db.prepare(
-    `INSERT INTO blocks (id, content, indent_level, sort_order, date, page_id, user_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-  ).run(id, content || "", indent_level || 0, sort_order || 0, date || "", page_id || null, user.id);
+    `INSERT INTO blocks (id, content, indent_level, sort_order, date, page_id, user_id, due_start, due_end, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+  ).run(id, content || "", indent_level || 0, sort_order || 0, date || "", page_id || null, user.id, dueStart, dueEnd);
 
   // Recompute links if it's a date block
   if (!page_id && date) {

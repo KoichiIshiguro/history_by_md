@@ -124,6 +124,25 @@ function initDb(db: Database.Database) {
     db.exec("ALTER TABLE blocks ADD COLUMN vector_synced_at TEXT");
   }
 
+  // Migration: add due_start/due_end for action date ranges (Gantt support)
+  if (!blockColNames.includes("due_start")) {
+    db.exec("ALTER TABLE blocks ADD COLUMN due_start TEXT");
+  }
+  if (!blockColNames.includes("due_end")) {
+    db.exec("ALTER TABLE blocks ADD COLUMN due_end TEXT");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_due ON blocks(user_id, due_start, due_end)");
+
+  // Backfill: action/done blocks without due dates get their creation date as single-day
+  db.exec(`
+    UPDATE blocks
+       SET due_start = COALESCE(NULLIF(date, ''), date(created_at)),
+           due_end   = COALESCE(NULLIF(date, ''), date(created_at))
+     WHERE due_start IS NULL
+       AND (content LIKE '!action %' OR content LIKE '!ACTION %'
+         OR content LIKE '!done %'   OR content LIKE '!DONE %')
+  `);
+
   // Migration: create ai_usage table for daily API call limits
   db.exec(`
     CREATE TABLE IF NOT EXISTS ai_usage (

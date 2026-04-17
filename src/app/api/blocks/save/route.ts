@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { parseAction, todayISO } from "@/lib/actionDate";
 import { NextRequest } from "next/server";
 
 function extractTags(content: string): string[] {
@@ -114,14 +115,18 @@ export async function POST(request: NextRequest) {
       db.prepare("DELETE FROM blocks WHERE user_id = ? AND page_id = ?").run(user.id, pageId);
 
       const insertBlock = db.prepare(
-        `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, page_id)
-         VALUES (?, ?, '', ?, ?, ?, ?)`
+        `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, page_id, due_start, due_end)
+         VALUES (?, ?, '', ?, ?, ?, ?, ?, ?)`
       );
 
       for (let i = 0; i < blocks.length; i++) {
         const block = blocks[i];
         const blockId = block.id || crypto.randomUUID();
-        insertBlock.run(blockId, user.id, block.content, block.indent_level, block.sort_order, pageId);
+        // Page blocks have no block.date — fallback to today for actions without @
+        const meta = parseAction(block.content, todayISO());
+        const dueStart = meta.isAction ? meta.dueStart : null;
+        const dueEnd = meta.isAction ? meta.dueEnd : null;
+        insertBlock.run(blockId, user.id, block.content, block.indent_level, block.sort_order, pageId, dueStart, dueEnd);
 
         for (const tagName of tagResults[i]) {
           let tag = findTag.get(tagName, user.id) as { id: string } | undefined;
@@ -150,14 +155,18 @@ export async function POST(request: NextRequest) {
     db.prepare("DELETE FROM blocks WHERE user_id = ? AND date = ? AND page_id IS NULL").run(user.id, date);
 
     const insertBlock = db.prepare(
-      `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, due_start, due_end)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
       const blockId = block.id || crypto.randomUUID();
-      insertBlock.run(blockId, user.id, date, block.content, block.indent_level, block.sort_order);
+      // Date blocks: @ omitted → use this date as default
+      const meta = parseAction(block.content, date || todayISO());
+      const dueStart = meta.isAction ? meta.dueStart : null;
+      const dueEnd = meta.isAction ? meta.dueEnd : null;
+      insertBlock.run(blockId, user.id, date, block.content, block.indent_level, block.sort_order, dueStart, dueEnd);
 
       for (const tagName of tagResults[i]) {
         let tag = findTag.get(tagName, user.id) as { id: string } | undefined;
