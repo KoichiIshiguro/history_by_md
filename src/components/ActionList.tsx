@@ -63,13 +63,29 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
     if (onActionChange) onActionChange();
   };
 
-  // Group by date
-  const grouped: Record<string, ActionBlock[]> = {};
+  // Group: page-based actions by page, date-based actions by date
+  const grouped: Record<string, { label: string; isPage: boolean; pageId: string; actions: ActionBlock[] }> = {};
   for (const action of actions) {
-    const key = action.date || "日付なし";
-    if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(action);
+    if (action.page_id) {
+      const key = `page:${action.page_id}`;
+      if (!grouped[key]) {
+        const page = allPages.find((p) => p.id === action.page_id);
+        grouped[key] = { label: page?.full_path || page?.name || "不明なページ", isPage: true, pageId: action.page_id, actions: [] };
+      }
+      grouped[key].actions.push(action);
+    } else {
+      const key = action.date || "日付なし";
+      if (!grouped[key]) grouped[key] = { label: key, isPage: false, pageId: "", actions: [] };
+      grouped[key].actions.push(action);
+    }
   }
+  // Sort: dates (desc) first, then pages (alphabetical)
+  const sortedGroups = Object.entries(grouped).sort(([, a], [, b]) => {
+    if (a.isPage && !b.isPage) return 1;
+    if (!a.isPage && b.isPage) return -1;
+    if (a.isPage && b.isPage) return a.label.localeCompare(b.label);
+    return b.label.localeCompare(a.label);
+  });
 
   const compact = !!pageId; // compact mode for sidebar
 
@@ -95,16 +111,22 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
           {showCompleted ? "アクションはありません" : "未完了のアクションはありません"}
         </div>
       ) : (
-        Object.entries(grouped).map(([date, dateActions]) => (
-          <div key={date} className="mb-4">
+        sortedGroups.map(([key, group]) => (
+          <div key={key} className="mb-4">
             <div
               className="text-xs font-medium text-gray-500 mb-1.5 cursor-pointer hover:text-blue-600"
-              onClick={() => date !== "日付なし" && onDateClick(date)}
+              onClick={() => {
+                if (group.isPage) {
+                  onPageClick(group.pageId, group.label);
+                } else if (group.label !== "日付なし") {
+                  onDateClick(group.label);
+                }
+              }}
             >
-              {date}
+              {group.isPage ? <span className="page-link">{group.label}</span> : group.label}
             </div>
             <div className="space-y-1">
-              {dateActions.map((action) => {
+              {group.actions.map((action) => {
                 const isDone = /^!done\s/i.test(action.content);
                 const displayContent = action.content.replace(/^!(action|done)\s/i, "");
                 return (
