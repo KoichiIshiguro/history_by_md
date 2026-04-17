@@ -1,0 +1,85 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch: # allow manual trigger from GitHub UI
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npx next build
+
+      - name: Create deploy package
+        run: |
+          tar czf deploy.tar.gz \
+            .next \
+            package.json \
+            package-lock.json \
+            src \
+            public \
+            next.config.ts \
+            tsconfig.json \
+            .env.local 2>/dev/null || true
+
+      - name: Copy to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "deploy.tar.gz"
+          target: "/tmp/stg"
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            set -e
+            cd /var/www/stg.histmd.saltybullet.com
+
+            # Stop service
+            sudo systemctl stop histmd-stg
+
+            # Extract pre-built package
+            rm -rf .next
+            tar xzf /tmp/stg/deploy.tar.gz
+            rm -f /tmp/stg/deploy.tar.gz
+
+            # Install production dependencies only (no build needed)
+            npm install --prefer-offline --omit=dev 2>&1 | tail -5
+            npm rebuild better-sqlite3
+
+            # Sync source files from git (dev branch for staging)
+            git pull origin dev 2>/dev/null || true
+
+            # Start service
+            sudo systemctl start histmd-stg
+            sleep 3
+
+            # Health check
+            HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3102/)
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "STG deploy successful!"
+            else
+              echo "STG deploy failed with HTTP $HTTP_CODE"
+              exit 1
+            fi
