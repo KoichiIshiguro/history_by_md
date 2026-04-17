@@ -9,8 +9,9 @@ import ActionList from "./ActionList";
 import TemplateEditor from "./TemplateEditor";
 import GetStartedGuide from "./GetStartedGuide";
 import AiChat from "./AiChat";
+import MeetingWorkspace from "./MeetingWorkspace";
 
-type ViewMode = "date" | "page" | "tag" | "admin" | "actions" | "templates" | "guide" | "chat";
+type ViewMode = "date" | "page" | "tag" | "admin" | "actions" | "templates" | "guide" | "chat" | "meetings";
 
 function toLocalDateString(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -298,6 +299,7 @@ export default function MainApp({ user, isAdmin }: Props) {
           onSelectTag={handleSelectTag}
           onSelectAdmin={() => setViewMode("admin")}
           onSelectActions={() => setViewMode("actions")}
+          onSelectMeetings={() => setViewMode("meetings")}
           onSelectTemplates={() => { setViewMode("templates"); setSelectedTemplateId(null); setSelectedTemplateName(""); }}
           onSignOut={() => signOut()}
           onPagesChange={fetchPages}
@@ -480,6 +482,13 @@ export default function MainApp({ user, isAdmin }: Props) {
           <div className="flex-1 overflow-auto p-4">
             {viewMode === "chat" ? (
               <AiChat />
+            ) : viewMode === "meetings" ? (
+              <MeetingWorkspace
+                allPages={pages}
+                allTags={tags}
+                onPageClick={handleSelectPage}
+                onDataChange={handleDataChange}
+              />
             ) : viewMode === "guide" ? (
               <GetStartedGuide onNavigate={(mode, id, name) => {
                 if (mode === "date") handleSelectDate(toLocalDateString(new Date()));

@@ -159,6 +159,34 @@ function initDb(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_ai_usage_user_date ON ai_usage(user_id, date);
   `);
 
+  // Migration: create meetings table for meeting transcripts
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS meetings (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      page_id TEXT,                         -- saved page (NULL until committed)
+      title TEXT NOT NULL DEFAULT '',
+      meeting_date TEXT NOT NULL DEFAULT '', -- YYYY-MM-DD, user-chosen or today
+      audio_filename TEXT,
+      audio_mime TEXT,
+      audio_size INTEGER,
+      duration_sec INTEGER,
+      language TEXT NOT NULL DEFAULT 'ja',
+      status TEXT NOT NULL DEFAULT 'uploaded',
+        -- 'uploaded' | 'transcribing' | 'transcribed' | 'polishing' | 'ready' | 'saved' | 'error'
+      error_message TEXT,
+      raw_transcript TEXT,                  -- Whisper output
+      polished_transcript TEXT,             -- Claude-polished
+      remove_fillers INTEGER NOT NULL DEFAULT 0,
+      attendees TEXT,                       -- JSON array of page names
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings(user_id, created_at DESC);
+  `);
+
   // Migration: create ai_threads and ai_messages tables for chat history
   db.exec(`
     CREATE TABLE IF NOT EXISTS ai_threads (

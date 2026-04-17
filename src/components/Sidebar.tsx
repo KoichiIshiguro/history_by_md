@@ -35,6 +35,7 @@ interface Props {
   onSelectTag: (tagId: string, tagName: string) => void;
   onSelectAdmin: () => void;
   onSelectActions: () => void;
+  onSelectMeetings: () => void;
   onSelectTemplates: () => void;
   onSignOut: () => void;
   onPagesChange: () => void;
@@ -94,7 +95,7 @@ function applyTheme(themeName: string) {
 
 export default function Sidebar({
   user, isAdmin, pages, tags, dates, selectedDate, selectedPageId, selectedTagId,
-  viewMode, onSelectDate, onSelectPage, onSelectTag, onSelectAdmin, onSelectActions,
+  viewMode, onSelectDate, onSelectPage, onSelectTag, onSelectAdmin, onSelectActions, onSelectMeetings,
   onSelectTemplates, onSignOut, onPagesChange, onTagsChange, onCloseMobile,
 }: Props) {
   const [expandedPages, setExpandedPages] = useState<Set<string>>(new Set());
@@ -401,7 +402,7 @@ export default function Sidebar({
 
       <div className="flex-1 overflow-auto">
         {/* All Actions button */}
-        <div className="p-2">
+        <div className="p-2 space-y-1">
           <button
             onClick={() => click(onSelectActions)}
             className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
@@ -414,6 +415,19 @@ export default function Sidebar({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
             </svg>
             全アクション
+          </button>
+          <button
+            onClick={() => click(onSelectMeetings)}
+            className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
+              viewMode === "meetings"
+                ? "bg-theme-100 text-theme-700 border border-theme-300"
+                : "text-gray-600 hover:bg-theme-50 border border-transparent"
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            </svg>
+            会議録
           </button>
         </div>
 
