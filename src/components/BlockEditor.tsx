@@ -237,7 +237,7 @@ function BlockEditorInner({
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
   const [editingPageTitle, setEditingPageTitle] = useState(false);
   const [pageTitleDraft, setPageTitleDraft] = useState("");
-  const [backlinksOpen, setBacklinksOpen] = useState(false);
+  const [backlinksOpen, setBacklinksOpen] = useState(true);
   const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);

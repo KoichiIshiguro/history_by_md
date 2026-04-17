@@ -111,6 +111,8 @@ export async function PUT(request: NextRequest) {
     // Recompute tags and page refs for this block's context
     if (!block.page_id && block.date) {
       recomputeLinksForDate(db, user.id, block.date);
+    } else if (block.page_id) {
+      recomputeLinksForPage(db, user.id, block.page_id);
     }
   });
 
@@ -201,10 +203,21 @@ function resolvePageByPath(db: any, userId: string, fullPath: string): { id: str
   return { id: pageId };
 }
 
+function recomputeLinksForPage(db: any, userId: string, pageId: string) {
+  const allBlocks = db
+    .prepare("SELECT id, content, indent_level FROM blocks WHERE user_id = ? AND page_id = ? ORDER BY sort_order ASC")
+    .all(userId, pageId) as { id: string; content: string; indent_level: number }[];
+  recomputeLinksForBlocks(db, userId, allBlocks);
+}
+
 function recomputeLinksForDate(db: any, userId: string, date: string) {
   const allBlocks = db
     .prepare("SELECT id, content, indent_level FROM blocks WHERE user_id = ? AND date = ? AND page_id IS NULL ORDER BY sort_order ASC")
     .all(userId, date) as { id: string; content: string; indent_level: number }[];
+  recomputeLinksForBlocks(db, userId, allBlocks);
+}
+
+function recomputeLinksForBlocks(db: any, userId: string, allBlocks: { id: string; content: string; indent_level: number }[]) {
 
   const tagStack: Array<{ tags: string[]; indent: number }> = [];
   const pageStack: Array<{ pages: string[]; indent: number }> = [];
