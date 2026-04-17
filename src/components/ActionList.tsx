@@ -191,6 +191,7 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
           onPageClick={onPageClick}
           onDateClick={onDateClick}
           onActionChange={() => { fetchActions(); if (onActionChange) onActionChange(); }}
+          onToggleDone={toggleAction}
         />
       ) : (
         sortedGroups.map((group) => (

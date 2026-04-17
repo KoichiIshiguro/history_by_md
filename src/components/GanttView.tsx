@@ -10,6 +10,7 @@ interface Props {
   onPageClick: (id: string, name: string) => void;
   onDateClick: (date: string) => void;
   onActionChange: () => void;
+  onToggleDone: (action: ActionBlock) => void;
 }
 
 const DAY_WIDTH = 32; // px per day column
@@ -44,7 +45,7 @@ function todayISO(): string {
   return toISO(new Date());
 }
 
-export default function GanttView({ groups, allPages, onPageClick, onDateClick, onActionChange }: Props) {
+export default function GanttView({ groups, allPages, onPageClick, onDateClick, onActionChange, onToggleDone }: Props) {
   // Build timeline range from all actions + today
   const { rangeStart, rangeEnd, totalDays } = useMemo(() => {
     let minDate = todayISO();
@@ -220,9 +221,16 @@ export default function GanttView({ groups, allPages, onPageClick, onDateClick, 
                 return (
                   <div
                     key={action.id}
-                    className="flex items-center px-3 border-b border-gray-100 text-xs"
+                    className="flex items-center gap-1.5 px-3 border-b border-gray-100 text-xs"
                     style={{ height: ROW_HEIGHT, paddingLeft: `${12 + action.indent_level * 8}px` }}
                   >
+                    <input
+                      type="checkbox"
+                      checked={isDone}
+                      onChange={() => onToggleDone(action)}
+                      className="rounded border-gray-300 cursor-pointer flex-shrink-0"
+                      title={isDone ? "未完了に戻す" : "完了にする"}
+                    />
                     <span className={`truncate ${isDone ? "line-through text-gray-400" : "text-gray-700"}`} title={label}>
                       {label}
                     </span>
