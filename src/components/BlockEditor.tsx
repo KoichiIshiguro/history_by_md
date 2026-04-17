@@ -79,9 +79,18 @@ export function preprocessCustomSyntax(content: string, allPages: PageInfo[], al
     return `<span class="page-link" data-page-id="${dataId}" data-page-name="${trimmed}">${trimmed}</span>`;
   });
 
-  // !action / !done prefix → styled span
-  result = result.replace(/^!(action)\s/i, '<span class="action-flag action-open">\u25CF</span> ');
-  result = result.replace(/^!(done)\s/i, '<span class="action-flag action-done">\u25CF</span> ');
+  // !action / !done prefix (optionally with @-date spec) → styled span + inline date pill
+  const renderActionPrefix = (kind: "action" | "done", spec: string | undefined) => {
+    const dot = `<span class="action-flag action-${kind === "done" ? "done" : "open"}">\u25CF</span>`;
+    if (spec) {
+      // spec is like "4/17-29" or "2026/4/17-2026/6/1" — show as a small pill
+      return `${dot} <span class="action-date-pill">📅 ${spec}</span> `;
+    }
+    return `${dot} `;
+  };
+  result = result.replace(/^!(action|done)(?:@(\S+))?\s/i, (_m, kind: string, spec?: string) =>
+    renderActionPrefix(kind.toLowerCase() as "action" | "done", spec)
+  );
 
   // #tag → HTML span (but not inside code blocks or HTML tags)
   result = result.replace(/(^|[^&\w])#([^\s#{}()<>]+)/g, (_match, prefix: string, tagName: string) => {
@@ -332,7 +341,7 @@ function BlockEditorInner({
     }
     // Notify sidebar directly via CustomEvent — bypasses MainApp state entirely
     const hasTags = updatedBlocks.some((b) => /#[^\s#]+/.test(b.content));
-    const hasActions = updatedBlocks.some((b) => /^!(action|done)\s/i.test(b.content));
+    const hasActions = updatedBlocks.some((b) => /^!(action|done)(@\S+)?\s/i.test(b.content));
     if (hasTags) window.dispatchEvent(new Event("tags-changed"));
     if (hasActions) window.dispatchEvent(new Event("actions-changed"));
   }, [viewMode, selectedDate, selectedPageId]);

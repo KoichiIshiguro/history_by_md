@@ -139,8 +139,10 @@ function initDb(db: Database.Database) {
        SET due_start = COALESCE(NULLIF(date, ''), date(created_at)),
            due_end   = COALESCE(NULLIF(date, ''), date(created_at))
      WHERE due_start IS NULL
-       AND (content LIKE '!action %' OR content LIKE '!ACTION %'
-         OR content LIKE '!done %'   OR content LIKE '!DONE %')
+       AND (content LIKE '!action %'  OR content LIKE '!action@%'
+         OR content LIKE '!ACTION %'  OR content LIKE '!ACTION@%'
+         OR content LIKE '!done %'    OR content LIKE '!done@%'
+         OR content LIKE '!DONE %'    OR content LIKE '!DONE@%')
   `);
 
   // Migration: create ai_usage table for daily API call limits

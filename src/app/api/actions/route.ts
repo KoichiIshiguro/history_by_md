@@ -14,9 +14,13 @@ export async function GET(request: NextRequest) {
   const pageId = request.nextUrl.searchParams.get("pageId");
   const includeCompleted = request.nextUrl.searchParams.get("includeCompleted") === "true";
 
+  // Match both "!action " (with space) and "!action@..." (with date spec).
+  // Case-insensitive via LIKE is implicit for ASCII in SQLite default collation (NOCASE not needed here
+  // since we explicitly cover !ACTION too).
   const contentFilter = includeCompleted
-    ? "(b.content LIKE '!action %' OR b.content LIKE '!done %')"
-    : "b.content LIKE '!action %'";
+    ? "((b.content LIKE '!action %'  OR b.content LIKE '!action@%' OR b.content LIKE '!ACTION %' OR b.content LIKE '!ACTION@%')" +
+      " OR (b.content LIKE '!done %' OR b.content LIKE '!done@%'   OR b.content LIKE '!DONE %'   OR b.content LIKE '!DONE@%'))"
+    : "(b.content LIKE '!action %'   OR b.content LIKE '!action@%' OR b.content LIKE '!ACTION %' OR b.content LIKE '!ACTION@%')";
 
   // Helper: get child blocks for an action (stop at next block with <= indent)
   function getActionChildren(action: any) {
