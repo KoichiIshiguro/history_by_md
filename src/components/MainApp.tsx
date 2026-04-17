@@ -52,6 +52,7 @@ export default function MainApp({ user, isAdmin }: Props) {
   const [selectedTemplateName, setSelectedTemplateName] = useState("");
   const [actionVersion, setActionVersion] = useState(0);
   const bumpActionVersion = useCallback(() => setActionVersion((v) => v + 1), []);
+  const [reloading, setReloading] = useState(false);
 
   // Navigation history (back/forward)
   type NavEntry = { viewMode: ViewMode; date: string; pageId: string | null; pageName: string; tagId: string | null; tagName: string };
@@ -243,6 +244,18 @@ export default function MainApp({ user, isAdmin }: Props) {
     fetchTags();
   }, [fetchTags]);
 
+  // Full reload: sidebar data + blocks (via actionVersion bump which triggers BlockEditor fetchBlocks)
+  const handleReload = useCallback(async () => {
+    setReloading(true);
+    try {
+      await Promise.all([fetchPages(), fetchTags(), fetchDates()]);
+      bumpActionVersion();
+    } finally {
+      // brief delay so the spinning icon is visible even on fast networks
+      setTimeout(() => setReloading(false), 400);
+    }
+  }, [fetchPages, fetchTags, fetchDates, bumpActionVersion]);
+
   const closeMobileSidebar = () => {
     if (isMobile) setSidebarOpen(false);
   };
@@ -432,6 +445,16 @@ export default function MainApp({ user, isAdmin }: Props) {
                 </button>
               </>
             )}
+            <button
+              onClick={handleReload}
+              disabled={reloading}
+              className={`rounded p-1.5 transition text-gray-400 hover:bg-theme-50 hover:text-gray-600 disabled:opacity-50`}
+              title="最新データを取得"
+            >
+              <svg className={`h-4 w-4 ${reloading ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
             <button
               onClick={() => setViewMode("chat")}
               className={`rounded p-1.5 transition ${viewMode === "chat" ? "bg-theme-100 text-theme-600" : "text-gray-400 hover:bg-theme-50 hover:text-gray-600"}`}
