@@ -132,9 +132,30 @@ export default function GanttView({ groups, allPages, onPageClick, onDateClick, 
     }
   };
 
-  const handleAddAction = async (group: ActionGroup) => {
-    const title = window.prompt("新しいアクションの内容を入力:", "");
-    if (!title || !title.trim()) return;
+  // Inline-add state: which group key is currently in add-mode + draft text
+  const [addingKey, setAddingKey] = useState<string | null>(null);
+  const [draftText, setDraftText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const draftInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (addingKey && draftInputRef.current) draftInputRef.current.focus();
+  }, [addingKey]);
+
+  const startAdding = (group: ActionGroup) => {
+    setAddingKey(group.key);
+    setDraftText("");
+  };
+
+  const cancelAdding = () => {
+    setAddingKey(null);
+    setDraftText("");
+  };
+
+  const commitAdding = async (group: ActionGroup) => {
+    const title = draftText.trim();
+    if (!title) { cancelAdding(); return; }
+    setSaving(true);
     try {
       const res = await fetch("/api/actions/create", {
         method: "POST",
@@ -145,9 +166,12 @@ export default function GanttView({ groups, allPages, onPageClick, onDateClick, 
         }),
       });
       if (!res.ok) throw new Error("作成失敗");
+      cancelAdding();
       onActionChange();
     } catch (err) {
       alert("アクションの作成に失敗しました: " + (err as Error).message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -207,8 +231,9 @@ export default function GanttView({ groups, allPages, onPageClick, onDateClick, 
                   {group.isPage ? <span className="page-link">{group.label}</span> : group.label}
                 </span>
                 <button
-                  onClick={() => handleAddAction(group)}
-                  className="flex-shrink-0 ml-1 rounded text-gray-400 hover:bg-theme-100 hover:text-theme-600 w-5 h-5 flex items-center justify-center text-sm leading-none"
+                  onClick={() => startAdding(group)}
+                  disabled={saving || addingKey === group.key}
+                  className="flex-shrink-0 ml-1 rounded text-gray-400 hover:bg-theme-100 hover:text-theme-600 w-5 h-5 flex items-center justify-center text-sm leading-none disabled:opacity-50"
                   title="このグループに追加"
                 >
                   +
@@ -237,6 +262,29 @@ export default function GanttView({ groups, allPages, onPageClick, onDateClick, 
                   </div>
                 );
               })}
+              {/* Inline add-row for this group */}
+              {addingKey === group.key && (
+                <div
+                  className="flex items-center gap-1.5 px-3 border-b border-gray-100 text-xs bg-theme-50"
+                  style={{ height: ROW_HEIGHT, paddingLeft: "12px" }}
+                >
+                  <span className="flex-shrink-0 text-gray-300">☐</span>
+                  <input
+                    ref={draftInputRef}
+                    type="text"
+                    value={draftText}
+                    onChange={(e) => setDraftText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); commitAdding(group); }
+                      else if (e.key === "Escape") { e.preventDefault(); cancelAdding(); }
+                    }}
+                    onBlur={() => { if (!draftText.trim()) cancelAdding(); }}
+                    placeholder="アクション名を入力（Enter で追加、Esc でキャンセル）"
+                    disabled={saving}
+                    className="flex-1 bg-transparent border-none outline-none text-xs text-gray-700 placeholder:text-gray-400 min-w-0"
+                  />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -362,6 +410,16 @@ export default function GanttView({ groups, allPages, onPageClick, onDateClick, 
                       <div
                         key={`${action.id}-row`}
                         style={{ position: "absolute", left: 0, top: yOffset, width: timelineWidth, height: ROW_HEIGHT, borderBottom: "1px solid #f3f4f6", pointerEvents: "none" }}
+                      />
+                    );
+                    yOffset += ROW_HEIGHT;
+                  }
+                  // Empty placeholder row in timeline when adding inline, to match label column
+                  if (addingKey === group.key) {
+                    rows.push(
+                      <div
+                        key={`${group.key}-adding-row`}
+                        style={{ position: "absolute", left: 0, top: yOffset, width: timelineWidth, height: ROW_HEIGHT, borderBottom: "1px solid #f3f4f6", background: "rgba(251, 146, 60, 0.05)", pointerEvents: "none" }}
                       />
                     );
                     yOffset += ROW_HEIGHT;
