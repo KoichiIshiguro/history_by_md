@@ -308,15 +308,26 @@ export default function MeetingWorkspace({ allPages, onPageClick, onDataChange }
             </div>
 
             <div>
-              <label className="text-xs font-medium text-gray-600 block mb-1">音声ファイル（mp3 / m4a / wav / webm、最大25MB）</label>
+              <label className="text-xs font-medium text-gray-600 block mb-1">音声ファイル（mp3 / m4a / wav / webm / flac 等、最大500MB）</label>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="audio/*,.m4a,.mp3,.wav,.webm,.mp4"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                accept="audio/*,.m4a,.mp3,.wav,.webm,.mp4,.flac,.aiff,.aif,.ogg,.opus"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null;
+                  if (f && f.size > 500 * 1024 * 1024) {
+                    alert("ファイルサイズが上限 500MB を超えています。");
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                    return;
+                  }
+                  setFile(f);
+                }}
                 className="block w-full text-sm text-gray-600 file:mr-3 file:rounded file:border-0 file:bg-theme-100 file:px-3 file:py-1.5 file:text-theme-700 hover:file:bg-theme-200"
               />
               {file && <div className="text-xs text-gray-500 mt-1">{file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)</div>}
+              <div className="text-[10px] text-gray-400 mt-1">
+                20MBを超える音声・WAVなどの非圧縮形式は、サーバー側で自動的に低ビットレートに圧縮されます（音声認識の精度にはほぼ影響しません）。
+              </div>
             </div>
 
             <label className="flex items-center gap-2 text-xs text-gray-600 select-none">

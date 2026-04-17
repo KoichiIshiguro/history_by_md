@@ -1,16 +1,22 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { compressAudioToOpus } from "@/lib/audioCompress";
 import { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
-// Allow large audio uploads (Next.js default request body limit is small).
-// On self-hosted Node runtime this is bound by Node/nginx limits, not Next.
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 const GROQ_MODEL = "whisper-large-v3-turbo";
-// Groq accepts up to 25MB per file (same as OpenAI Whisper).
-const MAX_BYTES = 25 * 1024 * 1024;
+
+// Accept up to 500MB of raw upload. Anything above 20MB is auto-compressed
+// server-side to Opus 32kbps mono, which gets a 1-hour meeting down to ~15MB.
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+// Groq's per-file limit.
+const GROQ_LIMIT_BYTES = 25 * 1024 * 1024;
+// Compress anything larger than this (also covers uncompressed WAV/AIFF).
+const COMPRESS_THRESHOLD_BYTES = 20 * 1024 * 1024;
+const UNCOMPRESSED_EXTENSIONS = new Set(["wav", "aiff", "aif", "flac"]);
 
 /**
  * Accepts multipart/form-data with:
@@ -40,8 +46,11 @@ export async function POST(request: NextRequest) {
   if (!(file instanceof File)) {
     return Response.json({ error: "No audio file provided" }, { status: 400 });
   }
-  if (file.size > MAX_BYTES) {
-    return Response.json({ error: `ファイルサイズが上限 (25MB) を超えています。音声を圧縮するか分割してください。` }, { status: 413 });
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return Response.json(
+      { error: `ファイルサイズが上限 (${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB) を超えています。` },
+      { status: 413 },
+    );
   }
 
   const meetingIdIn = form.get("meetingId");
@@ -70,9 +79,40 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Forward the file to Groq. FormData / File are available in Node 20+ runtime.
+    // Decide whether we need to compress. We compress if:
+    //  - File is uncompressed (WAV/AIFF/FLAC)
+    //  - File is bigger than our threshold (>20MB)
+    //  - File is too big for Groq directly (>25MB) — hard requirement
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    const isUncompressed = UNCOMPRESSED_EXTENSIONS.has(ext);
+    const shouldCompress = isUncompressed || file.size > COMPRESS_THRESHOLD_BYTES;
+
+    let uploadBlob: Blob;
+    let uploadName: string;
+    if (shouldCompress) {
+      const inputBuf = Buffer.from(await file.arrayBuffer());
+      const compressed = await compressAudioToOpus(inputBuf, file.name, { bitrateKbps: 32, channels: 1 });
+      if (compressed.bytes.byteLength > GROQ_LIMIT_BYTES) {
+        // Still too big even at 32kbps mono — would need chunking. Report for now.
+        throw new Error(
+          `圧縮後も Groq の 25MB 上限を超えました (${(compressed.bytes.byteLength / 1024 / 1024).toFixed(1)}MB)。音声を分割してください。`,
+        );
+      }
+      uploadBlob = new Blob([new Uint8Array(compressed.bytes)], { type: compressed.mime });
+      uploadName = compressed.filename;
+    } else {
+      if (file.size > GROQ_LIMIT_BYTES) {
+        throw new Error(
+          `Groq の上限 (25MB) を超えています。圧縮を有効にするか、音声を短く区切ってください。`,
+        );
+      }
+      uploadBlob = file;
+      uploadName = file.name;
+    }
+
+    // Forward to Groq. FormData / File are available in Node 20+ runtime.
     const groqForm = new FormData();
-    groqForm.append("file", file, file.name);
+    groqForm.append("file", uploadBlob, uploadName);
     groqForm.append("model", GROQ_MODEL);
     groqForm.append("language", language);
     groqForm.append("response_format", "verbose_json");
