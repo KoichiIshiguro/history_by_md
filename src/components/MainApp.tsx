@@ -6,6 +6,7 @@ import BlockEditor from "./BlockEditor";
 import AdminPanel from "./AdminPanel";
 import Sidebar from "./Sidebar";
 import ActionList from "./ActionList";
+import MeetingsSidebar from "./MeetingsSidebar";
 import TemplateEditor from "./TemplateEditor";
 import GetStartedGuide from "./GetStartedGuide";
 import AiChat from "./AiChat";
@@ -47,6 +48,10 @@ export default function MainApp({ user, isAdmin }: Props) {
   const [pages, setPages] = useState<Page[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [dates, setDates] = useState<string[]>([]);
+  const [meetings, setMeetings] = useState<Array<{ id: string; title: string; meeting_date: string; status: string }>>([]);
+  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+  const [meetingsReloadSignal, setMeetingsReloadSignal] = useState(0);
+  const bumpMeetingsReload = useCallback(() => setMeetingsReloadSignal((v) => v + 1), []);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -160,11 +165,22 @@ export default function MainApp({ user, isAdmin }: Props) {
     }
   }, []);
 
+  const fetchMeetings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/meetings");
+      if (res.ok) setMeetings(await res.json());
+    } catch { /* silent */ }
+  }, []);
+
   useEffect(() => {
     fetchPages();
     fetchTags();
     fetchDates();
-  }, [fetchPages, fetchTags, fetchDates]);
+    fetchMeetings();
+  }, [fetchPages, fetchTags, fetchDates, fetchMeetings]);
+
+  // Refetch meetings on signal (e.g. after new upload or save)
+  useEffect(() => { fetchMeetings(); }, [meetingsReloadSignal, fetchMeetings]);
 
   // Sync selectedPageName when pages list updates (e.g. after rename)
   useEffect(() => {
@@ -229,6 +245,11 @@ export default function MainApp({ user, isAdmin }: Props) {
     pushNav({ viewMode: "tag", date: selectedDate, pageId: null, pageName: "", tagId, tagName });
   };
 
+  const handleSelectMeeting = (meetingId: string | null) => {
+    setSelectedMeetingId(meetingId);
+    if (viewMode !== "meetings") setViewMode("meetings");
+  };
+
   const handleSelectDate = (date: string) => {
     setViewMode("date");
     setSelectedDate(date);
@@ -262,7 +283,7 @@ export default function MainApp({ user, isAdmin }: Props) {
     if (isMobile) setSidebarOpen(false);
   };
 
-  const hasRightSidebar = viewMode === "page" && selectedPageId;
+  const hasRightSidebar = (viewMode === "page" && !!selectedPageId) || viewMode === "meetings";
 
   return (
     <div ref={mainRef} className="flex h-screen overflow-hidden" suppressHydrationWarning>
@@ -488,10 +509,16 @@ export default function MainApp({ user, isAdmin }: Props) {
               <BillingPage />
             ) : viewMode === "meetings" ? (
               <MeetingWorkspace
+                selectedMeetingId={selectedMeetingId}
+                onSelectMeeting={handleSelectMeeting}
                 allPages={pages}
                 allTags={tags}
+                allMeetings={meetings}
                 onPageClick={handleSelectPage}
+                onTagClick={handleSelectTag}
+                onDateClick={handleSelectDate}
                 onDataChange={handleDataChange}
+                onReloadSignal={bumpMeetingsReload}
               />
             ) : viewMode === "guide" ? (
               <GetStartedGuide onNavigate={(mode, id, name) => {
@@ -542,18 +569,29 @@ export default function MainApp({ user, isAdmin }: Props) {
           </div>
           {/* Right sidebar - desktop */}
           {hasRightSidebar && !isMobile && (
-            <div className="w-72 border-l border-theme-100 bg-theme-50 overflow-auto p-3 flex-shrink-0">
-              <h3 className="text-sm font-semibold text-theme-600 mb-2">アクション</h3>
-              <ActionList
-                pageId={selectedPageId!}
-                allPages={pages}
-                allTags={tags}
-                onPageClick={handleSelectPage}
-                onTagClick={handleSelectTag}
-                onDateClick={handleSelectDate}
-                onActionChange={bumpActionVersion}
-                actionVersion={actionVersion}
-              />
+            <div className="w-72 border-l border-theme-100 bg-theme-50 overflow-hidden flex-shrink-0 flex flex-col">
+              {viewMode === "meetings" ? (
+                <MeetingsSidebar
+                  activeMeetingId={selectedMeetingId}
+                  onSelectMeeting={(id) => setSelectedMeetingId(id)}
+                  onCreateNew={() => setSelectedMeetingId(null)}
+                  reloadSignal={meetingsReloadSignal}
+                />
+              ) : (
+                <div className="overflow-auto p-3 flex-1">
+                  <h3 className="text-sm font-semibold text-theme-600 mb-2">アクション</h3>
+                  <ActionList
+                    pageId={selectedPageId!}
+                    allPages={pages}
+                    allTags={tags}
+                    onPageClick={handleSelectPage}
+                    onTagClick={handleSelectTag}
+                    onDateClick={handleSelectDate}
+                    onActionChange={bumpActionVersion}
+                    actionVersion={actionVersion}
+                  />
+                </div>
+              )}
             </div>
           )}
           {/* Right sidebar - mobile (slide in from right) */}
@@ -563,24 +601,35 @@ export default function MainApp({ user, isAdmin }: Props) {
                 rightSidebarOpen ? "translate-x-0" : "translate-x-full"
               }`}
             >
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-theme-600">アクション</h3>
+              <div className="flex items-center justify-between mb-3 p-3">
+                <h3 className="text-sm font-semibold text-theme-600">{viewMode === "meetings" ? "会議録" : "アクション"}</h3>
                 <button onClick={() => setRightSidebarOpen(false)} className="rounded p-1 text-gray-400 hover:bg-theme-100">
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               </div>
-              <ActionList
-                pageId={selectedPageId!}
-                allPages={pages}
-                allTags={tags}
-                onPageClick={handleSelectPage}
-                onTagClick={handleSelectTag}
-                onDateClick={handleSelectDate}
-                onActionChange={bumpActionVersion}
-                actionVersion={actionVersion}
-              />
+              {viewMode === "meetings" ? (
+                <MeetingsSidebar
+                  activeMeetingId={selectedMeetingId}
+                  onSelectMeeting={(id) => { setSelectedMeetingId(id); setRightSidebarOpen(false); }}
+                  onCreateNew={() => { setSelectedMeetingId(null); setRightSidebarOpen(false); }}
+                  reloadSignal={meetingsReloadSignal}
+                />
+              ) : (
+                <div className="p-3">
+                  <ActionList
+                    pageId={selectedPageId!}
+                    allPages={pages}
+                    allTags={tags}
+                    onPageClick={handleSelectPage}
+                    onTagClick={handleSelectTag}
+                    onDateClick={handleSelectDate}
+                    onActionChange={bumpActionVersion}
+                    actionVersion={actionVersion}
+                  />
+                </div>
+              )}
             </div>
           )}
         </main>

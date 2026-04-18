@@ -49,26 +49,44 @@ interface Block {
 export interface PageInfo { id: string; name: string; parent_id?: string | null; ref_count?: number; full_path?: string; }
 export interface TagInfo { id: string; name: string; block_count?: number; }
 export interface Template { id: string; name: string; content: string; }
+export interface MeetingInfo { id: string; title: string; meeting_date: string; status: string; }
 
 interface Props {
-  viewMode: "date" | "page" | "tag" | "admin" | "actions";
+  viewMode: "date" | "page" | "tag" | "admin" | "actions" | "meeting";
   selectedDate: string;
   selectedPageId: string | null;
   selectedPageName: string;
   selectedTagId: string | null;
   selectedTagName: string;
+  selectedMeetingId?: string | null;
   allPages: PageInfo[];
   allTags: TagInfo[];
+  allMeetings?: MeetingInfo[];
   onPageClick: (pageId: string, pageName: string) => void;
   onTagClick: (tagId: string, tagName: string) => void;
   onDateClick: (date: string) => void;
+  onMeetingClick?: (meetingId: string) => void;
   onDataChange: () => void;
   actionVersion?: number;
 }
 
 // Pre-process custom syntax into HTML spans before markdown rendering
-export function preprocessCustomSyntax(content: string, allPages: PageInfo[], allTags: TagInfo[]): string {
+export function preprocessCustomSyntax(content: string, allPages: PageInfo[], allTags: TagInfo[], allMeetings?: MeetingInfo[]): string {
   let result = content;
+
+  // @YYYYMMDD/title → meeting link span
+  // Title can contain any non-whitespace chars up to end-of-word/line
+  result = result.replace(/@(\d{8})\/([^\s]+)/g, (_match, ymd: string, title: string) => {
+    const y = ymd.slice(0, 4), m = ymd.slice(4, 6), d = ymd.slice(6, 8);
+    const date = `${y}-${m}-${d}`;
+    // Try to resolve to an actual meeting ID if we have the list
+    let meetingId = "";
+    if (allMeetings) {
+      const match = allMeetings.find((mt) => mt.meeting_date === date && mt.title === title);
+      if (match) meetingId = match.id;
+    }
+    return `<span class="meeting-link" data-meeting-id="${meetingId}" data-meeting-date="${date}" data-meeting-title="${title}">📝 ${ymd}/${title}</span>`;
+  });
 
   // {{page/path}} → HTML span
   result = result.replace(/\{\{([^}]+)\}\}/g, (_match, pageName: string) => {
@@ -135,16 +153,17 @@ function MermaidDiagram({ chart }: { chart: string }) {
 
 // Markdown content renderer with GFM + custom syntax
 export function MarkdownContent({
-  content, allPages, allTags, onPageClick, onTagClick, onDateClick,
+  content, allPages, allTags, allMeetings, onPageClick, onTagClick, onDateClick,
 }: {
   content: string;
   allPages: PageInfo[];
   allTags: TagInfo[];
+  allMeetings?: MeetingInfo[];
   onPageClick: (id: string, name: string) => void;
   onTagClick: (id: string, name: string) => void;
   onDateClick: (date: string) => void;
 }) {
-  const processed = useMemo(() => preprocessCustomSyntax(content, allPages, allTags), [content, allPages, allTags]);
+  const processed = useMemo(() => preprocessCustomSyntax(content, allPages, allTags, allMeetings), [content, allPages, allTags, allMeetings]);
 
   return (
     <ReactMarkdown
@@ -231,8 +250,8 @@ export function MarkdownContent({
 
 function BlockEditorInner({
   viewMode, selectedDate, selectedPageId, selectedPageName,
-  selectedTagId, selectedTagName, allPages, allTags,
-  onPageClick, onTagClick, onDateClick, onDataChange, actionVersion,
+  selectedTagId, selectedTagName, selectedMeetingId, allPages, allTags, allMeetings,
+  onPageClick, onTagClick, onDateClick, onMeetingClick, onDataChange, actionVersion,
 }: Props) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [pageRefs, setPageRefs] = useState<Block[]>([]);
@@ -282,7 +301,9 @@ function BlockEditorInner({
   const fetchBlocks = useCallback(async () => {
     setLoading(true);
     let url = "/api/blocks";
-    if (viewMode === "page" && selectedPageId) {
+    if (viewMode === "meeting" && selectedMeetingId) {
+      url += `?meetingId=${selectedMeetingId}`;
+    } else if (viewMode === "page" && selectedPageId) {
       url += `?pageId=${selectedPageId}`;
     } else if (viewMode === "tag" && selectedTagId) {
       url += `?tagId=${selectedTagId}`;
@@ -292,7 +313,7 @@ function BlockEditorInner({
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
-      if (viewMode === "page" && data.pageBlocks !== undefined) {
+      if ((viewMode === "page" || viewMode === "meeting") && data.pageBlocks !== undefined) {
         setBlocks(data.pageBlocks);
 
         setPageRefs(data.pageRefs || []);
@@ -310,7 +331,7 @@ function BlockEditorInner({
       }
     }
     setLoading(false);
-  }, [viewMode, selectedDate, selectedPageId, selectedTagId]);
+  }, [viewMode, selectedDate, selectedPageId, selectedTagId, selectedMeetingId]);
 
   useEffect(() => { fetchBlocks(); }, [fetchBlocks]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -321,7 +342,12 @@ function BlockEditorInner({
 
   // Save blocks to API, then notify sidebar via stable refs (no dependency chain)
   const saveBlocks = useCallback(async (updatedBlocks: Block[]) => {
-    if (viewMode === "page" && selectedPageId) {
+    if (viewMode === "meeting" && selectedMeetingId) {
+      await fetch("/api/blocks/save", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingId: selectedMeetingId, blocks: updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i })) }),
+      });
+    } else if (viewMode === "page" && selectedPageId) {
       await fetch("/api/blocks/save", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pageId: selectedPageId, blocks: updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i })) }),
@@ -344,7 +370,7 @@ function BlockEditorInner({
     const hasActions = updatedBlocks.some((b) => /^!(action|done)(@\S+)?\s/i.test(b.content));
     if (hasTags) window.dispatchEvent(new Event("tags-changed"));
     if (hasActions) window.dispatchEvent(new Event("actions-changed"));
-  }, [viewMode, selectedDate, selectedPageId]);
+  }, [viewMode, selectedDate, selectedPageId, selectedMeetingId]);
 
   const debouncedSave = useCallback((updatedBlocks: Block[]) => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -1082,13 +1108,13 @@ function BlockEditorInner({
     isSelected: selectedBlockIds.has(block.id),
     editContent, showSuggestions: showSuggestions && editingBlockId === block.id,
     suggestions, selectedSuggestion,
-    allPages, allTags,
+    allPages, allTags, allMeetings,
     setInputRef, onStartEditing: startEditing,
     onEditContentChange: handleContentChange,
     onFinishEditing: () => { blurTimeoutRef.current = setTimeout(finishEditing, 150); },
     onKeyDown: isRef ? ((e: KeyboardEvent<HTMLTextAreaElement>, b: Block, _i: number) => handleRefKeyDown(e, b)) : handleKeyDown,
     onPaste: isRef ? handleRefPaste : handlePaste,
-    onPageClick, onTagClick, onDateClick, onApplySuggestion: applySuggestion,
+    onPageClick, onTagClick, onDateClick, onMeetingClick, onApplySuggestion: applySuggestion,
     onBlockMouseDown: isRef ? ((e: React.MouseEvent, blockIndex: number) => handleRefBlockMouseDown(e, blockIndex, block)) : handleBlockMouseDown,
     skipMouseUpRef,
     onIndent: isRef ? (b: Block) => {
@@ -1407,6 +1433,7 @@ const BlockEditor = React.memo(BlockEditorInner, (prev, next) => {
   if (prev.viewMode !== next.viewMode) return false;
   if (prev.selectedDate !== next.selectedDate) return false;
   if (prev.selectedPageId !== next.selectedPageId) return false;
+  if (prev.selectedMeetingId !== next.selectedMeetingId) return false;
   if (prev.selectedPageName !== next.selectedPageName) return false;
   if (prev.selectedTagId !== next.selectedTagId) return false;
   if (prev.selectedTagName !== next.selectedTagName) return false;
@@ -1425,8 +1452,8 @@ export default BlockEditor;
 interface BlockLineProps {
   block: Block; blockIndex: number; isEditing: boolean; isSelected: boolean;
   editContent: string; showSuggestions: boolean;
-  suggestions: { type: "tag" | "page" | "template"; items: { id: string; name: string; content?: string }[] };
-  selectedSuggestion: number; allPages: PageInfo[]; allTags: TagInfo[];
+  suggestions: { type: "tag" | "page" | "template" | "meeting"; items: { id: string; name: string; content?: string }[] };
+  selectedSuggestion: number; allPages: PageInfo[]; allTags: TagInfo[]; allMeetings?: MeetingInfo[];
   setInputRef: (id: string, el: HTMLTextAreaElement | null) => void;
   onStartEditing: (block: Block) => void; onEditContentChange: (c: string) => void;
   onFinishEditing: () => void;
@@ -1435,6 +1462,7 @@ interface BlockLineProps {
   onPageClick: (id: string, name: string) => void;
   onTagClick: (id: string, name: string) => void;
   onDateClick: (date: string) => void;
+  onMeetingClick?: (meetingId: string) => void;
   onApplySuggestion: (name: string) => void;
   onBlockMouseDown: (e: React.MouseEvent, blockIndex: number) => void;
   skipMouseUpRef: React.MutableRefObject<boolean>;
@@ -1443,8 +1471,8 @@ interface BlockLineProps {
 }
 
 const BlockLine = React.memo(function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, showSuggestions,
-  suggestions, selectedSuggestion, allPages, allTags, setInputRef, onStartEditing,
-  onEditContentChange, onFinishEditing, onKeyDown, onPaste, onPageClick, onTagClick, onDateClick,
+  suggestions, selectedSuggestion, allPages, allTags, allMeetings, setInputRef, onStartEditing,
+  onEditContentChange, onFinishEditing, onKeyDown, onPaste, onPageClick, onTagClick, onDateClick, onMeetingClick,
   onApplySuggestion, onBlockMouseDown, skipMouseUpRef, onIndent, onOutdent,
 }: BlockLineProps) {
   const indent = block.indent_level * 24;
@@ -1456,7 +1484,7 @@ const BlockLine = React.memo(function BlockLine({ block, blockIndex, isEditing, 
         // Don't trigger selection/re-render when clicking on links — it replaces DOM nodes
         // and prevents the click event from firing
         const target = e.target as HTMLElement;
-        if (target.closest('.page-link, .tag-inline, .date-link, .gfm-link')) return;
+        if (target.closest('.page-link, .tag-inline, .date-link, .meeting-link, .gfm-link')) return;
         onBlockMouseDown(e, blockIndex);
       }}
       onMouseUp={(e) => {
@@ -1464,7 +1492,7 @@ const BlockLine = React.memo(function BlockLine({ block, blockIndex, isEditing, 
         if (skipMouseUpRef.current) { skipMouseUpRef.current = false; return; }
         if (isEditing) return;
         const target = e.target as HTMLElement;
-        const link = target.closest('.page-link, .tag-inline, .date-link') as HTMLElement | null;
+        const link = target.closest('.page-link, .tag-inline, .date-link, .meeting-link') as HTMLElement | null;
         if (link) {
           // Navigate via event delegation using data attributes from DOM
           e.stopPropagation();
@@ -1479,6 +1507,9 @@ const BlockLine = React.memo(function BlockLine({ block, blockIndex, isEditing, 
           } else if (link.classList.contains('date-link')) {
             const date = link.getAttribute('data-date') || "";
             if (date) onDateClick(date);
+          } else if (link.classList.contains('meeting-link')) {
+            const meetingId = link.getAttribute('data-meeting-id') || "";
+            if (meetingId && onMeetingClick) onMeetingClick(meetingId);
           }
           return;
         }
@@ -1573,7 +1604,7 @@ const BlockLine = React.memo(function BlockLine({ block, blockIndex, isEditing, 
       ) : (
         <div className="block-line block-content flex-1 p-1 text-sm w-full select-none">
           {block.content
-            ? <MarkdownContent content={block.content} allPages={allPages} allTags={allTags}
+            ? <MarkdownContent content={block.content} allPages={allPages} allTags={allTags} allMeetings={allMeetings}
                 onPageClick={onPageClick} onTagClick={onTagClick} onDateClick={onDateClick} />
             : "\u00A0"}
         </div>

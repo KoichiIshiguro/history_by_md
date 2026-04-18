@@ -193,6 +193,13 @@ function initDb(db: Database.Database) {
     db.exec("ALTER TABLE meetings ADD COLUMN audio_tmp_path TEXT");
   }
 
+  // Migration: blocks.meeting_id — meetings now own blocks directly (no separate page)
+  const blockColsForMeeting = db.prepare("PRAGMA table_info(blocks)").all() as { name: string }[];
+  if (!blockColsForMeeting.some((c) => c.name === "meeting_id")) {
+    db.exec("ALTER TABLE blocks ADD COLUMN meeting_id TEXT REFERENCES meetings(id) ON DELETE CASCADE");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_meeting ON blocks(meeting_id)");
+  }
+
   // Migration: api_usage_log for billing / usage dashboard
   db.exec(`
     CREATE TABLE IF NOT EXISTS api_usage_log (

@@ -16,10 +16,14 @@ export async function GET(_request: NextRequest) {
   }
   const user = session.user as any;
   const db = getDb();
+  // Hide legacy meetings (those that wrote their content to a page in the tree,
+  // under the old spec). They're identifiable by status='saved' AND page_id IS NOT NULL.
   const rows = db
     .prepare(
       `SELECT id, page_id, title, meeting_date, duration_sec, status, error_message, created_at, updated_at
-         FROM meetings WHERE user_id = ?
+         FROM meetings
+        WHERE user_id = ?
+          AND NOT (status = 'saved' AND page_id IS NOT NULL)
         ORDER BY created_at DESC`
     )
     .all(user.id);

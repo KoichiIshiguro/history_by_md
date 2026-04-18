@@ -14,6 +14,19 @@ export async function GET(request: NextRequest) {
   const date = request.nextUrl.searchParams.get("date");
   const pageId = request.nextUrl.searchParams.get("pageId");
   const tagId = request.nextUrl.searchParams.get("tagId");
+  const meetingId = request.nextUrl.searchParams.get("meetingId");
+
+  if (meetingId) {
+    // Meeting's own blocks
+    const meetingBlocks = db
+      .prepare(
+        `SELECT b.* FROM blocks b
+         WHERE b.meeting_id = ? AND b.user_id = ?
+         ORDER BY b.sort_order ASC`
+      )
+      .all(meetingId, user.id);
+    return Response.json({ pageBlocks: meetingBlocks, pageRefs: [], dateRefs: [] });
+  }
 
   if (pageId) {
     // Page view: 3 sections
@@ -135,7 +148,7 @@ export async function POST(request: NextRequest) {
   const user = session.user as any;
   const db = getDb();
   const body = await request.json();
-  const { id, content, indent_level, sort_order, date, page_id } = body;
+  const { id, content, indent_level, sort_order, date, page_id, meeting_id } = body;
 
   // Compute due dates from content
   const meta = parseAction(content || "", date || todayISO());
@@ -143,9 +156,9 @@ export async function POST(request: NextRequest) {
   const dueEnd = meta.isAction ? meta.dueEnd : null;
 
   db.prepare(
-    `INSERT INTO blocks (id, content, indent_level, sort_order, date, page_id, user_id, due_start, due_end, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-  ).run(id, content || "", indent_level || 0, sort_order || 0, date || "", page_id || null, user.id, dueStart, dueEnd);
+    `INSERT INTO blocks (id, content, indent_level, sort_order, date, page_id, meeting_id, user_id, due_start, due_end, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+  ).run(id, content || "", indent_level || 0, sort_order || 0, date || "", page_id || null, meeting_id || null, user.id, dueStart, dueEnd);
 
   // Recompute links if it's a date block
   if (!page_id && date) {

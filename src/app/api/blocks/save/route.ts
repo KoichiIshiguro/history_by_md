@@ -86,9 +86,10 @@ export async function POST(request: NextRequest) {
   const user = session.user as any;
   const db = getDb();
   const body = await request.json();
-  const { date, pageId, blocks } = body as {
+  const { date, pageId, meetingId, blocks } = body as {
     date?: string;
     pageId?: string;
+    meetingId?: string;
     blocks: Array<{
       id?: string;
       content: string;
@@ -103,6 +104,45 @@ export async function POST(request: NextRequest) {
   const insertTag = db.prepare("INSERT OR IGNORE INTO tags (id, name, user_id) VALUES (?, ?, ?)");
   const insertBlockTag = db.prepare("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)");
   const insertBlockPage = db.prepare("INSERT OR IGNORE INTO block_pages (block_id, page_id) VALUES (?, ?)");
+
+  if (meetingId) {
+    // Meeting content save — blocks belong to a meeting (not a page)
+    const saveTransaction = db.transaction(() => {
+      const existing = db.prepare("SELECT id FROM blocks WHERE user_id = ? AND meeting_id = ?").all(user.id, meetingId) as { id: string }[];
+      for (const b of existing) {
+        db.prepare("DELETE FROM block_tags WHERE block_id = ?").run(b.id);
+        db.prepare("DELETE FROM block_pages WHERE block_id = ?").run(b.id);
+      }
+      db.prepare("DELETE FROM blocks WHERE user_id = ? AND meeting_id = ?").run(user.id, meetingId);
+
+      const insertBlock = db.prepare(
+        `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, meeting_id, due_start, due_end)
+         VALUES (?, ?, '', ?, ?, ?, ?, ?, ?)`
+      );
+
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
+        const blockId = block.id || crypto.randomUUID();
+        const meta = parseAction(block.content, todayISO());
+        const dueStart = meta.isAction ? meta.dueStart : null;
+        const dueEnd = meta.isAction ? meta.dueEnd : null;
+        insertBlock.run(blockId, user.id, block.content, block.indent_level, block.sort_order, meetingId, dueStart, dueEnd);
+
+        for (const tagName of tagResults[i]) {
+          let tag = findTag.get(tagName, user.id) as { id: string } | undefined;
+          if (!tag) { const tid = crypto.randomUUID(); insertTag.run(tid, tagName, user.id); tag = { id: tid }; }
+          insertBlockTag.run(blockId, tag.id);
+        }
+        for (const pagePath of pageResults[i]) {
+          const page = resolvePageByPath(db, user.id, pagePath);
+          insertBlockPage.run(blockId, page.id);
+        }
+      }
+      db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
+    });
+    saveTransaction();
+    return Response.json({ ok: true });
+  }
 
   if (pageId) {
     // Page content save

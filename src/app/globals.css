@@ -238,6 +238,21 @@ body {
   border: 1px solid rgba(251, 191, 36, 0.4);
 }
 
+.meeting-link {
+  display: inline-block;
+  font-size: 0.9em;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(139, 92, 246, 0.1);
+  color: #6d28d9;
+  cursor: pointer;
+  text-decoration: none;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+.meeting-link:hover {
+  background: rgba(139, 92, 246, 0.18);
+}
+
 /* AI response markdown styling */
 .ai-response p { margin: 0.4em 0; }
 .ai-response p:first-child { margin-top: 0; }
