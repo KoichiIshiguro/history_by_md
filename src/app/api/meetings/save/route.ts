@@ -52,27 +52,17 @@ export async function POST(request: NextRequest) {
   }
 
   const tx = db.transaction(() => {
-    // 1. Split polished transcript into paragraph blocks
+    // 1. Split polished transcript into paragraph blocks.
+    //    Attendees are NOT inserted as content blocks — they live as
+    //    metadata on the meeting row and render in the header UI.
+    //    This avoids inadvertently creating pages via {{name}} auto-resolution.
     const paragraphs = content.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
-
-    // 2. Optional meta blocks (date + attendees) at the top
     type NewBlock = { id: string; content: string; indent: number };
-    const newBlocks: NewBlock[] = [];
-    const metaParts: string[] = [`📅 ${meetingDate}`];
-    if (meeting.duration_sec) metaParts.push(`⏱ ${formatDuration(meeting.duration_sec)}`);
-    newBlocks.push({ id: crypto.randomUUID(), content: metaParts.join("  "), indent: 0 });
-    if (attendees && attendees.length > 0) {
-      newBlocks.push({
-        id: crypto.randomUUID(),
-        content: `👥 ${attendees.map((n) => `{{${n}}}`).join(" ")}`,
-        indent: 0,
-      });
-    }
-    for (const p of paragraphs) {
-      newBlocks.push({ id: crypto.randomUUID(), content: p, indent: 0 });
-    }
+    const newBlocks: NewBlock[] = paragraphs.map((p) => ({
+      id: crypto.randomUUID(), content: p, indent: 0,
+    }));
 
-    // 3. Clear any existing blocks attached to this meeting (re-approval case)
+    // 2. Clear any existing blocks attached to this meeting (re-approval case)
     const existing = db.prepare("SELECT id FROM blocks WHERE user_id = ? AND meeting_id = ?").all(user.id, meetingId) as { id: string }[];
     for (const b of existing) {
       db.prepare("DELETE FROM block_tags WHERE block_id = ?").run(b.id);
@@ -80,7 +70,7 @@ export async function POST(request: NextRequest) {
     }
     db.prepare("DELETE FROM blocks WHERE user_id = ? AND meeting_id = ?").run(user.id, meetingId);
 
-    // 4. Insert blocks with meeting_id
+    // 3. Insert blocks with meeting_id
     const insertBlock = db.prepare(
       `INSERT INTO blocks (id, user_id, date, content, indent_level, sort_order, meeting_id)
        VALUES (?, ?, '', ?, ?, ?, ?)`
@@ -89,19 +79,8 @@ export async function POST(request: NextRequest) {
       insertBlock.run(newBlocks[i].id, user.id, newBlocks[i].content, newBlocks[i].indent, i, meetingId);
     }
 
-    // 5. Link attendee pages via block_pages (for backlinks)
-    if (attendees && attendees.length > 0) {
-      const attendeeBlockIdx = newBlocks.findIndex((b) => b.content.startsWith("👥"));
-      if (attendeeBlockIdx >= 0) {
-        const attendeeBlockId = newBlocks[attendeeBlockIdx].id;
-        for (const name of attendees) {
-          const pageId = ensurePage(db, user.id, name, null);
-          db.prepare("INSERT OR IGNORE INTO block_pages (block_id, page_id) VALUES (?, ?)").run(attendeeBlockId, pageId);
-        }
-      }
-    }
-
-    // 6. Update meeting row: mark as saved, clear transcripts and audio path
+    // 4. Update meeting row: mark as saved, clear transcripts and audio path,
+    //    keep attendees as JSON metadata only
     db.prepare(
       `UPDATE meetings SET title = ?, meeting_date = ?,
                             raw_transcript = NULL, polished_transcript = NULL,
@@ -174,22 +153,3 @@ async function generateShortTitle(transcript: string, userId: string): Promise<s
   return text.replace(/^["'「『]+|["'」』]+$/g, "").split("\n")[0].trim().slice(0, 40);
 }
 
-function ensurePage(db: any, userId: string, name: string, parentId: string | null): string {
-  const found = parentId === null
-    ? db.prepare("SELECT id FROM pages WHERE name = ? AND user_id = ? AND parent_id IS NULL").get(name, userId)
-    : db.prepare("SELECT id FROM pages WHERE name = ? AND user_id = ? AND parent_id = ?").get(name, userId, parentId);
-  if (found) return found.id;
-  const id = crypto.randomUUID();
-  db.prepare("INSERT INTO pages (id, name, user_id, parent_id, sort_order) VALUES (?, ?, ?, ?, 0)")
-    .run(id, name, userId, parentId);
-  return id;
-}
-
-function formatDuration(sec: number): string {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  if (h > 0) return `${h}時間${m}分`;
-  if (m > 0) return `${m}分${s}秒`;
-  return `${s}秒`;
-}

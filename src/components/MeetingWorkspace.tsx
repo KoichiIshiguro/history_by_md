@@ -348,17 +348,35 @@ export default function MeetingWorkspace({
   // Saved (approved) → show as editable page
   return (
     <div className="mx-auto max-w-3xl space-y-3">
-      <div className="flex items-center gap-3 pb-2 border-b border-gray-200">
-        <div className="flex-1">
-          <h1 className="text-xl font-semibold text-gray-800">{detail.title}</h1>
-          <div className="text-xs text-gray-500 mt-0.5">
-            <span className="date-link cursor-pointer" onClick={() => onDateClick(detail.meeting_date)}>
-              {detail.meeting_date}
-            </span>
-            {detail.duration_sec ? ` · ${formatDuration(detail.duration_sec)}` : ""}
+      <div className="pb-2 border-b border-gray-200">
+        <div className="flex items-start gap-3">
+          <div className="flex-1">
+            <h1 className="text-xl font-semibold text-gray-800">{detail.title}</h1>
+            <div className="text-xs text-gray-500 mt-0.5">
+              <span className="date-link cursor-pointer" onClick={() => onDateClick(detail.meeting_date)}>
+                {detail.meeting_date}
+              </span>
+              {detail.duration_sec ? ` · ${formatDuration(detail.duration_sec)}` : ""}
+            </div>
           </div>
+          <button onClick={deleteMeeting} className="text-xs text-gray-400 hover:text-red-500">削除</button>
         </div>
-        <button onClick={deleteMeeting} className="text-xs text-gray-400 hover:text-red-500">削除</button>
+
+        <AttendeesHeader
+          attendees={editAttendees}
+          setAttendees={async (next) => {
+            setEditAttendees(next);
+            try {
+              await fetch(`/api/meetings/${detail.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ attendees: next }),
+              });
+            } catch { /* noop */ }
+          }}
+          allPages={allPages}
+          onPageClick={onPageClick}
+        />
       </div>
 
       <BlockEditor
@@ -461,4 +479,75 @@ function formatDuration(sec: number): string {
   if (h > 0) return `${h}時間${m}分`;
   if (m > 0) return `${m}分${sec % 60}秒`;
   return `${sec}秒`;
+}
+
+/**
+ * Attendees chip display for the meeting header.
+ * - Attendees are metadata only (no pages are auto-created).
+ * - If a page with the same name already exists, the chip becomes a clickable link.
+ * - Editable inline: users can add/remove attendees after approval.
+ */
+function AttendeesHeader({
+  attendees, setAttendees, allPages, onPageClick,
+}: {
+  attendees: string[];
+  setAttendees: (next: string[]) => void;
+  allPages: PageInfo[];
+  onPageClick: (id: string, name: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [input, setInput] = useState("");
+
+  const findPage = (name: string) => allPages.find((p) => p.name === name || p.full_path === name);
+
+  const add = () => {
+    const name = input.trim();
+    if (!name || attendees.includes(name)) { setInput(""); return; }
+    setAttendees([...attendees, name]);
+    setInput("");
+  };
+
+  return (
+    <div className="mt-2 flex items-center flex-wrap gap-1">
+      <span className="text-xs text-gray-500">👥</span>
+      {attendees.length === 0 && !editing && (
+        <button onClick={() => setEditing(true)} className="text-xs text-gray-400 hover:text-theme-600 underline">
+          参加者を追加
+        </button>
+      )}
+      {attendees.map((a) => {
+        const page = findPage(a);
+        return (
+          <span key={a} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-gray-100">
+            {page ? (
+              <span className="page-link cursor-pointer" onClick={() => onPageClick(page.id, page.full_path || page.name)}>{a}</span>
+            ) : (
+              <span className="text-gray-700">{a}</span>
+            )}
+            {editing && (
+              <button onClick={() => setAttendees(attendees.filter((x) => x !== a))} className="text-gray-400 hover:text-red-500">×</button>
+            )}
+          </span>
+        );
+      })}
+      {editing && (
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); add(); }
+            else if (e.key === "Escape") { setInput(""); setEditing(false); }
+          }}
+          onBlur={() => { if (input.trim()) add(); setEditing(false); }}
+          placeholder="名前を入力して Enter"
+          autoFocus
+          className="border border-gray-300 rounded px-2 py-0.5 text-xs w-40 focus:ring-1 focus:ring-theme-400 focus:outline-none"
+        />
+      )}
+      {!editing && attendees.length > 0 && (
+        <button onClick={() => setEditing(true)} className="text-xs text-gray-400 hover:text-theme-600 ml-1">編集</button>
+      )}
+    </div>
+  );
 }
