@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { parseAction, todayISO } from "@/lib/actionDate";
+import { scopeVersion } from "@/lib/blockVersion";
 import { NextRequest } from "next/server";
 
 function extractTags(content: string): string[] {
@@ -86,10 +87,16 @@ export async function POST(request: NextRequest) {
   const user = session.user as any;
   const db = getDb();
   const body = await request.json();
-  const { date, pageId, meetingId, blocks } = body as {
+  const { date, pageId, meetingId, expectedVersion, blocks } = body as {
     date?: string;
     pageId?: string;
     meetingId?: string;
+    /**
+     * Optimistic concurrency token — the `version` the client received when
+     * it last fetched this scope. If the server's current version differs,
+     * return 409 so the client can show a conflict dialog.
+     */
+    expectedVersion?: string | null;
     blocks: Array<{
       id?: string;
       content: string;
@@ -97,6 +104,25 @@ export async function POST(request: NextRequest) {
       sort_order: number;
     }>;
   };
+
+  // Version check (only when client provides expectedVersion)
+  if (expectedVersion !== undefined && expectedVersion !== null) {
+    const scope = meetingId
+      ? { user_id: user.id, meeting_id: meetingId }
+      : pageId
+        ? { user_id: user.id, page_id: pageId }
+        : { user_id: user.id, date: date || "" };
+    const currentVersion = scopeVersion(db, scope);
+    // If the scope has blocks and their version doesn't match, reject.
+    // (Empty scope with null version is acceptable — no prior state to conflict with.)
+    if (currentVersion && currentVersion !== expectedVersion) {
+      return Response.json({
+        code: "VERSION_CONFLICT",
+        error: "他のデバイスでこのページが更新されています",
+        currentVersion,
+      }, { status: 409 });
+    }
+  }
 
   const { tagResults, pageResults } = computeBlockLinks(blocks);
 
@@ -141,7 +167,8 @@ export async function POST(request: NextRequest) {
       db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
     });
     saveTransaction();
-    return Response.json({ ok: true });
+    const newVersion = scopeVersion(db, { user_id: user.id, meeting_id: meetingId });
+    return Response.json({ ok: true, version: newVersion });
   }
 
   if (pageId) {
@@ -182,7 +209,8 @@ export async function POST(request: NextRequest) {
       db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
     });
     saveTransaction();
-    return Response.json({ ok: true });
+    const newVersion = scopeVersion(db, { user_id: user.id, page_id: pageId });
+    return Response.json({ ok: true, version: newVersion });
   }
 
   // Date page save
@@ -222,5 +250,6 @@ export async function POST(request: NextRequest) {
     db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
   });
   saveTransaction();
-  return Response.json({ ok: true });
+  const newVersion = scopeVersion(db, { user_id: user.id, date: date || "" });
+  return Response.json({ ok: true, version: newVersion });
 }

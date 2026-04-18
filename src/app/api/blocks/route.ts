@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { parseAction, todayISO } from "@/lib/actionDate";
+import { scopeVersion } from "@/lib/blockVersion";
 import { NextRequest } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -25,7 +26,8 @@ export async function GET(request: NextRequest) {
          ORDER BY b.sort_order ASC`
       )
       .all(meetingId, user.id);
-    return Response.json({ pageBlocks: meetingBlocks, pageRefs: [], dateRefs: [] });
+    const version = scopeVersion(db, { user_id: user.id, meeting_id: meetingId });
+    return Response.json({ pageBlocks: meetingBlocks, pageRefs: [], dateRefs: [], version });
   }
 
   if (pageId) {
@@ -62,7 +64,8 @@ export async function GET(request: NextRequest) {
       )
       .all(pageId, user.id);
 
-    return Response.json({ pageBlocks, pageRefs, dateRefs });
+    const version = scopeVersion(db, { user_id: user.id, page_id: pageId });
+    return Response.json({ pageBlocks, pageRefs, dateRefs, version });
   }
 
   if (tagId) {
@@ -77,6 +80,7 @@ export async function GET(request: NextRequest) {
          ORDER BY b.date DESC, b.sort_order ASC`
       )
       .all(tagId, user.id);
+    // Tag view aggregates across multiple scopes — no single version token
     return Response.json(blocks);
   }
 
@@ -89,7 +93,9 @@ export async function GET(request: NextRequest) {
          ORDER BY b.sort_order ASC`
       )
       .all(user.id, date);
-    return Response.json(blocks);
+    const version = scopeVersion(db, { user_id: user.id, date });
+    // Keep shape compatible (pageBlocks key) so the client parses uniformly
+    return Response.json({ pageBlocks: blocks, version });
   }
 
   // Get recent dates

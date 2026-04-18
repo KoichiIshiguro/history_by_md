@@ -255,6 +255,13 @@ function BlockEditorInner({
 }: Props) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [pageRefs, setPageRefs] = useState<Block[]>([]);
+  // Optimistic concurrency: server returns MAX(updated_at) for the current
+  // scope; we echo it back on save. Null means "no version yet" (empty scope).
+  const [lastVersion, setLastVersion] = useState<string | null>(null);
+  const lastVersionRef = useRef<string | null>(null);
+  lastVersionRef.current = lastVersion;
+  // Conflict modal state: holds the blocks the user was about to save.
+  const [conflictBlocks, setConflictBlocks] = useState<Block[] | null>(null);
   const [dateRefs, setDateRefs] = useState<Block[]>([]);
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
@@ -315,17 +322,24 @@ function BlockEditorInner({
       const data = await res.json();
       if ((viewMode === "page" || viewMode === "meeting") && data.pageBlocks !== undefined) {
         setBlocks(data.pageBlocks);
-
         setPageRefs(data.pageRefs || []);
         setDateRefs(data.dateRefs || []);
+        setLastVersion(data.version ?? null);
       } else if (viewMode === "tag") {
         setBlocks(data);
-
         setPageRefs([]);
         setDateRefs([]);
+        setLastVersion(null); // tag view has no single version
       } else {
-        setBlocks(data);
-
+        // Date view: server now returns { pageBlocks, version }
+        if (Array.isArray(data)) {
+          // Defensive: legacy array shape
+          setBlocks(data);
+          setLastVersion(null);
+        } else {
+          setBlocks(data.pageBlocks || []);
+          setLastVersion(data.version ?? null);
+        }
         setPageRefs([]);
         setDateRefs([]);
       }
@@ -340,19 +354,27 @@ function BlockEditorInner({
     if (actionVersion && actionVersion > 0) { fetchBlocks(); }
   }, [actionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Save blocks to API, then notify sidebar via stable refs (no dependency chain)
+  // Save blocks to API, then notify sidebar via stable refs (no dependency chain).
+  // On HTTP 409 (version conflict), opens the conflict modal and returns without
+  // dispatching events — the pending blocks are kept in state so the user can
+  // decide to copy-and-refresh or discard.
   const saveBlocks = useCallback(async (updatedBlocks: Block[]) => {
+    const payloadBlocks = updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i }));
+    const expectedVersion = lastVersionRef.current;
+    let res: Response | null = null;
+
     if (viewMode === "meeting" && selectedMeetingId) {
-      await fetch("/api/blocks/save", {
+      res = await fetch("/api/blocks/save", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meetingId: selectedMeetingId, blocks: updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i })) }),
+        body: JSON.stringify({ meetingId: selectedMeetingId, expectedVersion, blocks: payloadBlocks }),
       });
     } else if (viewMode === "page" && selectedPageId) {
-      await fetch("/api/blocks/save", {
+      res = await fetch("/api/blocks/save", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pageId: selectedPageId, blocks: updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i })) }),
+        body: JSON.stringify({ pageId: selectedPageId, expectedVersion, blocks: payloadBlocks }),
       });
     } else if (viewMode === "tag") {
+      // Tag view uses per-block PUT; no bulk version check
       for (const block of updatedBlocks) {
         await fetch("/api/blocks", {
           method: "PUT", headers: { "Content-Type": "application/json" },
@@ -360,11 +382,29 @@ function BlockEditorInner({
         });
       }
     } else {
-      await fetch("/api/blocks/save", {
+      res = await fetch("/api/blocks/save", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: selectedDate, blocks: updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i })) }),
+        body: JSON.stringify({ date: selectedDate, expectedVersion, blocks: payloadBlocks }),
       });
     }
+
+    // Handle conflict (only bulk save endpoints return 409)
+    if (res && res.status === 409) {
+      // Surface the conflict modal with the blocks the user was about to save
+      setConflictBlocks(updatedBlocks);
+      return; // skip the event dispatch below
+    }
+
+    // Update version token from response (only for bulk save endpoints)
+    if (res && res.ok) {
+      try {
+        const data = await res.json();
+        if (data && typeof data.version !== "undefined") {
+          setLastVersion(data.version ?? null);
+        }
+      } catch { /* ignore */ }
+    }
+
     // Notify sidebar directly via CustomEvent — bypasses MainApp state entirely
     const hasTags = updatedBlocks.some((b) => /#[^\s#]+/.test(b.content));
     const hasActions = updatedBlocks.some((b) => /^!(action|done)(@\S+)?\s/i.test(b.content));
@@ -1141,10 +1181,70 @@ function BlockEditorInner({
     },
   });
 
+  // Helper: format blocks as markdown-ish text for clipboard
+  const blocksToText = (bs: Block[]): string =>
+    bs.map((b) => "  ".repeat(b.indent_level) + b.content).join("\n");
+
+  const handleCopyAndRefresh = async () => {
+    if (!conflictBlocks) return;
+    const text = blocksToText(conflictBlocks);
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch { /* clipboard API unavailable or denied */ }
+    setConflictBlocks(null);
+    // Pull the latest from the server, discarding local edits
+    await fetchBlocks();
+    if (copied) {
+      alert("編集内容をクリップボードにコピーしました。必要な箇所にペーストで戻せます。");
+    } else {
+      // Fallback: hand the text back to the user via prompt-copy
+      window.prompt("クリップボードへの自動コピーに失敗しました。以下をコピーしてください:", text);
+    }
+  };
+
+  const handleDismissConflict = () => setConflictBlocks(null);
+
   return (
     <div ref={containerRef} className="mx-auto max-w-3xl outline-none" tabIndex={-1}
       onKeyDown={(e) => { if (e.key === "Shift") shiftHeldRef.current = true; handleContainerKeyDown(e); }}
       onKeyUp={(e) => { if (e.key === "Shift") shiftHeldRef.current = false; }}>
+      {conflictBlocks && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+            <div className="flex items-start gap-3 mb-3">
+              <svg className="h-6 w-6 text-amber-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <div>
+                <h3 className="text-base font-semibold text-gray-800">他のデバイスで編集されています</h3>
+                <p className="mt-1 text-sm text-gray-600">
+                  このページは別のデバイスから先に更新されました。いま保存すると、あちらの変更を上書きしてしまいます。
+                </p>
+              </div>
+            </div>
+            <div className="rounded bg-amber-50 border border-amber-200 p-2 text-xs text-amber-900 mb-4">
+              「編集内容をコピーして更新」を押すと：
+              <ol className="mt-1 ml-4 list-decimal space-y-0.5">
+                <li>現在の編集内容をクリップボードにコピー</li>
+                <li>最新の内容をサーバーから読み込み直す</li>
+                <li>必要な箇所にペーストで戻せます</li>
+              </ol>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={handleDismissConflict}
+                className="rounded px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+              >キャンセル</button>
+              <button
+                onClick={handleCopyAndRefresh}
+                className="rounded bg-theme-500 text-white px-4 py-1.5 text-sm font-medium hover:bg-theme-600"
+              >編集内容をコピーして更新</button>
+            </div>
+          </div>
+        </div>
+      )}
       {viewMode === "page" ? (
         <>
           {/* Page title (editable) */}
