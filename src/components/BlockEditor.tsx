@@ -260,8 +260,9 @@ function BlockEditorInner({
   const [lastVersion, setLastVersion] = useState<string | null>(null);
   const lastVersionRef = useRef<string | null>(null);
   lastVersionRef.current = lastVersion;
-  // Conflict modal state: holds the blocks the user was about to save.
-  const [conflictBlocks, setConflictBlocks] = useState<Block[] | null>(null);
+  // Conflict modal state: holds just the text the user was editing (not the
+  // whole scope). If there was no active edit, text is "" and we just refetch.
+  const [conflict, setConflict] = useState<{ text: string; manualCopyNeeded?: boolean } | null>(null);
   const [dateRefs, setDateRefs] = useState<Block[]>([]);
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
@@ -388,11 +389,13 @@ function BlockEditorInner({
       });
     }
 
-    // Handle conflict (only bulk save endpoints return 409)
+    // Handle conflict (only bulk save endpoints return 409).
+    // We only copy the text of the block the user was actively editing —
+    // not the entire scope. Structural changes (indent/outdent/split) are lost.
     if (res && res.status === 409) {
-      // Surface the conflict modal with the blocks the user was about to save
-      setConflictBlocks(updatedBlocks);
-      return; // skip the event dispatch below
+      const activeText = editingBlockIdRef.current ? editContentRef.current : "";
+      setConflict({ text: activeText });
+      return; // skip event dispatch below
     }
 
     // Update version token from response (only for bulk save endpoints)
@@ -1181,36 +1184,34 @@ function BlockEditorInner({
     },
   });
 
-  // Helper: format blocks as markdown-ish text for clipboard
-  const blocksToText = (bs: Block[]): string =>
-    bs.map((b) => "  ".repeat(b.indent_level) + b.content).join("\n");
-
   const handleCopyAndRefresh = async () => {
-    if (!conflictBlocks) return;
-    const text = blocksToText(conflictBlocks);
-    let copied = false;
+    if (!conflict) return;
+    const text = conflict.text;
+    // Empty text = nothing to copy (e.g., user blurred before conflict).
+    if (!text) {
+      setConflict(null);
+      await fetchBlocks();
+      return;
+    }
     try {
       await navigator.clipboard.writeText(text);
-      copied = true;
-    } catch { /* clipboard API unavailable or denied */ }
-    setConflictBlocks(null);
-    // Pull the latest from the server, discarding local edits
-    await fetchBlocks();
-    if (copied) {
-      alert("編集内容をクリップボードにコピーしました。必要な箇所にペーストで戻せます。");
-    } else {
-      // Fallback: hand the text back to the user via prompt-copy
-      window.prompt("クリップボードへの自動コピーに失敗しました。以下をコピーしてください:", text);
+      // Success — refresh silently, no browser dialog
+      setConflict(null);
+      await fetchBlocks();
+    } catch {
+      // Clipboard API refused (e.g., insecure context). Show the text inside
+      // the modal so the user can manually select + copy.
+      setConflict({ ...conflict, manualCopyNeeded: true });
     }
   };
 
-  const handleDismissConflict = () => setConflictBlocks(null);
+  const handleDismissConflict = () => setConflict(null);
 
   return (
     <div ref={containerRef} className="mx-auto max-w-3xl outline-none" tabIndex={-1}
       onKeyDown={(e) => { if (e.key === "Shift") shiftHeldRef.current = true; handleContainerKeyDown(e); }}
       onKeyUp={(e) => { if (e.key === "Shift") shiftHeldRef.current = false; }}>
-      {conflictBlocks && (
+      {conflict && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
             <div className="flex items-start gap-3 mb-3">
@@ -1224,23 +1225,46 @@ function BlockEditorInner({
                 </p>
               </div>
             </div>
-            <div className="rounded bg-amber-50 border border-amber-200 p-2 text-xs text-amber-900 mb-4">
-              「編集内容をコピーして更新」を押すと：
-              <ol className="mt-1 ml-4 list-decimal space-y-0.5">
-                <li>現在の編集内容をクリップボードにコピー</li>
-                <li>最新の内容をサーバーから読み込み直す</li>
-                <li>必要な箇所にペーストで戻せます</li>
-              </ol>
-            </div>
+            {conflict.text && !conflict.manualCopyNeeded && (
+              <div className="rounded bg-amber-50 border border-amber-200 p-2 text-xs text-amber-900 mb-4">
+                編集中だったブロックの内容をコピーして、最新の内容に更新します。
+                コピーされた内容は必要な箇所にペーストで戻せます。
+              </div>
+            )}
+            {!conflict.text && (
+              <div className="rounded bg-gray-50 border border-gray-200 p-2 text-xs text-gray-700 mb-4">
+                編集中のブロックがありません。最新の内容に更新します。
+              </div>
+            )}
+            {conflict.manualCopyNeeded && (
+              <div className="mb-4">
+                <div className="text-xs text-gray-600 mb-1">
+                  クリップボードへの自動コピーが拒否されました。下のテキストを選択してコピー（⌘/Ctrl + C）してください。
+                </div>
+                <textarea
+                  readOnly
+                  value={conflict.text}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="w-full h-24 text-xs border border-gray-300 rounded p-2 font-mono focus:ring-2 focus:ring-theme-400 focus:outline-none"
+                />
+              </div>
+            )}
             <div className="flex items-center justify-end gap-2">
               <button
                 onClick={handleDismissConflict}
                 className="rounded px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
               >キャンセル</button>
-              <button
-                onClick={handleCopyAndRefresh}
-                className="rounded bg-theme-500 text-white px-4 py-1.5 text-sm font-medium hover:bg-theme-600"
-              >編集内容をコピーして更新</button>
+              {conflict.manualCopyNeeded ? (
+                <button
+                  onClick={async () => { setConflict(null); await fetchBlocks(); }}
+                  className="rounded bg-theme-500 text-white px-4 py-1.5 text-sm font-medium hover:bg-theme-600"
+                >更新する</button>
+              ) : (
+                <button
+                  onClick={handleCopyAndRefresh}
+                  className="rounded bg-theme-500 text-white px-4 py-1.5 text-sm font-medium hover:bg-theme-600"
+                >{conflict.text ? "編集内容をコピーして更新" : "最新を読み込む"}</button>
+              )}
             </div>
           </div>
         </div>
