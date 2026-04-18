@@ -187,6 +187,32 @@ function initDb(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings(user_id, created_at DESC);
   `);
 
+  // Migration: ensure meetings.audio_tmp_path exists (persisted audio for re-polish, 24h)
+  const meetingCols = db.prepare("PRAGMA table_info(meetings)").all() as { name: string }[];
+  if (!meetingCols.some((c) => c.name === "audio_tmp_path")) {
+    db.exec("ALTER TABLE meetings ADD COLUMN audio_tmp_path TEXT");
+  }
+
+  // Migration: api_usage_log for billing / usage dashboard
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS api_usage_log (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      provider TEXT NOT NULL,        -- 'groq' | 'gemini' | 'voyage' | 'pinecone'
+      operation TEXT NOT NULL,       -- 'transcribe' | 'polish' | 'chat' | 'generate' | 'embed' | 'query'
+      model TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      audio_seconds INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      meta TEXT,                     -- JSON: extra context (file name, meeting id, etc.)
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_user_date ON api_usage_log(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_usage_provider ON api_usage_log(user_id, provider, created_at DESC);
+  `);
+
   // Migration: create ai_threads and ai_messages tables for chat history
   db.exec(`
     CREATE TABLE IF NOT EXISTS ai_threads (

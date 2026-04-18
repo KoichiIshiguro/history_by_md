@@ -231,11 +231,12 @@ export function createEmbeddingChunks(
 
 // ─── Voyage AI embeddings ───────────────────────────────────────
 
-export async function embedTexts(texts: string[]): Promise<number[][]> {
+export async function embedTexts(texts: string[], userId?: string): Promise<number[][]> {
   const apiKey = process.env.VOYAGE_API_KEY;
   if (!apiKey) throw new Error("VOYAGE_API_KEY is not set");
 
   const results: number[][] = [];
+  const model = "voyage-3-lite";
 
   // Process in batches of VOYAGE_BATCH_SIZE (with retry for rate limits)
   for (let i = 0; i < texts.length; i += VOYAGE_BATCH_SIZE) {
@@ -256,7 +257,7 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
         },
         body: JSON.stringify({
           input: batch,
-          model: "voyage-3-lite",
+          model,
         }),
       });
 
@@ -264,6 +265,18 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
         const data = await res.json();
         for (const item of data.data) {
           results.push(item.embedding);
+        }
+        // Log usage (best-effort; caller may omit userId for anonymous calls)
+        if (userId && data.usage?.total_tokens) {
+          try {
+            const { logUsage, voyageCost } = await import("./usageLog");
+            logUsage({
+              userId, provider: "voyage", operation: "embed", model,
+              inputTokens: data.usage.total_tokens,
+              costUsd: voyageCost({ inputTokens: data.usage.total_tokens, model }),
+              meta: { batchSize: batch.length },
+            });
+          } catch (e) { /* never break on logging */ }
         }
         lastError = "";
         break;
@@ -383,13 +396,14 @@ export async function queryVectors(
 export async function geminiChat(
   systemPrompt: string,
   userMessage: string,
-  options?: { stream?: boolean }
+  options?: { stream?: boolean; userId?: string; operation?: "chat" | "generate" | "polish" }
 ): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
+  const model = "gemini-2.5-flash";
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -411,18 +425,44 @@ export async function geminiChat(
   }
 
   const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+  // Log usage (best-effort)
+  if (options?.userId) {
+    try {
+      const { logUsage, geminiCost } = await import("./usageLog");
+      const usage = data.usageMetadata || {};
+      logUsage({
+        userId: options.userId,
+        provider: "gemini",
+        operation: options.operation || "chat",
+        model,
+        inputTokens: usage.promptTokenCount ?? 0,
+        outputTokens: usage.candidatesTokenCount ?? 0,
+        costUsd: geminiCost({
+          inputTokens: usage.promptTokenCount ?? 0,
+          outputTokens: usage.candidatesTokenCount ?? 0,
+          hasAudio: false,
+          hasThinking: false,
+        }),
+      });
+    } catch { /* never break on logging */ }
+  }
+
+  return text;
 }
 
 export async function geminiStream(
   systemPrompt: string,
-  userMessage: string
+  userMessage: string,
+  options?: { userId?: string }
 ): Promise<ReadableStream<Uint8Array>> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
+  const model = "gemini-2.5-flash";
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -446,6 +486,7 @@ export async function geminiStream(
   // Transform SSE stream into text stream
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
+  let lastUsage: any = null;
 
   return new ReadableStream({
     async start(controller) {
@@ -469,12 +510,35 @@ export async function geminiStream(
             const parsed = JSON.parse(jsonStr);
             const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
             if (text) controller.enqueue(encoder.encode(text));
+            // usageMetadata arrives in the final chunk
+            if (parsed.usageMetadata) lastUsage = parsed.usageMetadata;
           } catch {
             // Skip malformed JSON
           }
         }
       }
       controller.close();
+
+      // Log usage after stream completes
+      if (options?.userId && lastUsage) {
+        try {
+          const { logUsage, geminiCost } = await import("./usageLog");
+          logUsage({
+            userId: options.userId,
+            provider: "gemini",
+            operation: "chat",
+            model,
+            inputTokens: lastUsage.promptTokenCount ?? 0,
+            outputTokens: lastUsage.candidatesTokenCount ?? 0,
+            costUsd: geminiCost({
+              inputTokens: lastUsage.promptTokenCount ?? 0,
+              outputTokens: lastUsage.candidatesTokenCount ?? 0,
+              hasAudio: false,
+              hasThinking: false,
+            }),
+          });
+        } catch { /* never break on logging */ }
+      }
     },
   });
 }
@@ -568,7 +632,7 @@ export async function syncVectors(userId: string): Promise<{
   if (allChunks.length > 0) {
     try {
       const texts = allChunks.map((c) => c.text);
-      const embeddings = await embedTexts(texts);
+      const embeddings = await embedTexts(texts, userId);
 
       // 6. Upsert to Pinecone
       await upsertVectors(allChunks, embeddings);

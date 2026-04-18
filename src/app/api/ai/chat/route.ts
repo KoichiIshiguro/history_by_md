@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     incrementUsage(userId, "chat");
 
     // 1. Embed the user query
-    const [queryEmbedding] = await embedTexts([message]);
+    const [queryEmbedding] = await embedTexts([message], userId);
 
     // 2. Semantic search in Pinecone
     const matches = await queryVectors(queryEmbedding, userId, 8);
@@ -86,7 +86,7 @@ ${contextText ? `【参照ノート】\n${contextText}` : "【参照ノート】
 ${historyText ? `【直近の会話】\n${historyText}` : ""}`;
 
     // 6. Stream response from Gemini
-    const stream = await geminiStream(systemPrompt, message);
+    const stream = await geminiStream(systemPrompt, message, { userId });
 
     return new Response(stream, {
       headers: {

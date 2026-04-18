@@ -37,6 +37,7 @@ interface Props {
   onSelectActions: () => void;
   onSelectMeetings: () => void;
   onSelectTemplates: () => void;
+  onSelectBilling: () => void;
   onSignOut: () => void;
   onPagesChange: () => void;
   onTagsChange: () => void;
@@ -96,7 +97,7 @@ function applyTheme(themeName: string) {
 export default function Sidebar({
   user, isAdmin, pages, tags, dates, selectedDate, selectedPageId, selectedTagId,
   viewMode, onSelectDate, onSelectPage, onSelectTag, onSelectAdmin, onSelectActions, onSelectMeetings,
-  onSelectTemplates, onSignOut, onPagesChange, onTagsChange, onCloseMobile,
+  onSelectTemplates, onSelectBilling, onSignOut, onPagesChange, onTagsChange, onCloseMobile,
 }: Props) {
   const [expandedPages, setExpandedPages] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
@@ -374,6 +375,13 @@ export default function Sidebar({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
               </svg>
               テンプレート
+            </button>
+            <button onClick={() => { click(onSelectBilling); setShowUserMenu(false); }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 border-t border-gray-100">
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+              課金状況
             </button>
             <div className="px-3 py-2 border-t border-gray-100">
               <p className="text-xs font-medium text-gray-500 mb-1.5">テーマ色</p>

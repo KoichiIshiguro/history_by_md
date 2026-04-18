@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     // Optionally search for related notes to provide context
     let relatedContext = "";
     try {
-      const [queryEmbedding] = await embedTexts([prompt]);
+      const [queryEmbedding] = await embedTexts([prompt], userId);
       const matches = await queryVectors(queryEmbedding, userId, 5);
       const db = getDb();
       const contextParts: string[] = [];
@@ -56,7 +56,7 @@ export async function POST(req: Request) {
 - 余計な説明や前置きは不要です。生成した文章のみ出力してください
 ${context ? `\n【現在の編集コンテキスト】\n${context}` : ""}${relatedContext}`;
 
-    const result = await geminiChat(systemPrompt, prompt);
+    const result = await geminiChat(systemPrompt, prompt, { userId, operation: "generate" });
     return Response.json({ text: result });
   } catch (e: any) {
     console.error("AI generate error:", e);

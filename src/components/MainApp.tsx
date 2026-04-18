@@ -10,8 +10,9 @@ import TemplateEditor from "./TemplateEditor";
 import GetStartedGuide from "./GetStartedGuide";
 import AiChat from "./AiChat";
 import MeetingWorkspace from "./MeetingWorkspace";
+import BillingPage from "./BillingPage";
 
-type ViewMode = "date" | "page" | "tag" | "admin" | "actions" | "templates" | "guide" | "chat" | "meetings";
+type ViewMode = "date" | "page" | "tag" | "admin" | "actions" | "templates" | "guide" | "chat" | "meetings" | "billing";
 
 function toLocalDateString(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -300,6 +301,7 @@ export default function MainApp({ user, isAdmin }: Props) {
           onSelectAdmin={() => setViewMode("admin")}
           onSelectActions={() => setViewMode("actions")}
           onSelectMeetings={() => setViewMode("meetings")}
+          onSelectBilling={() => setViewMode("billing")}
           onSelectTemplates={() => { setViewMode("templates"); setSelectedTemplateId(null); setSelectedTemplateName(""); }}
           onSignOut={() => signOut()}
           onPagesChange={fetchPages}
@@ -482,6 +484,8 @@ export default function MainApp({ user, isAdmin }: Props) {
           <div className="flex-1 overflow-auto p-4">
             {viewMode === "chat" ? (
               <AiChat />
+            ) : viewMode === "billing" ? (
+              <BillingPage />
             ) : viewMode === "meetings" ? (
               <MeetingWorkspace
                 allPages={pages}
