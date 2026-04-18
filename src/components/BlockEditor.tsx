@@ -390,12 +390,17 @@ function BlockEditorInner({
     }
 
     // Handle conflict (only bulk save endpoints return 409).
-    // We only copy the text of the block the user was actively editing —
-    // not the entire scope. Structural changes (indent/outdent/split) are lost.
+    // We only copy the text of the block the user was actively editing.
+    // If there was no active edit, just silently pull the latest from the
+    // server — no modal, no dialog.
     if (res && res.status === 409) {
       const activeText = editingBlockIdRef.current ? editContentRef.current : "";
+      if (!activeText) {
+        await fetchBlocks();
+        return;
+      }
       setConflict({ text: activeText });
-      return; // skip event dispatch below
+      return;
     }
 
     // Update version token from response (only for bulk save endpoints)
@@ -1186,20 +1191,12 @@ function BlockEditorInner({
 
   const handleCopyAndRefresh = async () => {
     if (!conflict) return;
-    const text = conflict.text;
-    // Empty text = nothing to copy (e.g., user blurred before conflict).
-    if (!text) {
-      setConflict(null);
-      await fetchBlocks();
-      return;
-    }
     try {
-      await navigator.clipboard.writeText(text);
-      // Success — refresh silently, no browser dialog
+      await navigator.clipboard.writeText(conflict.text);
       setConflict(null);
       await fetchBlocks();
     } catch {
-      // Clipboard API refused (e.g., insecure context). Show the text inside
+      // Clipboard refused (e.g., insecure context). Show the text inside
       // the modal so the user can manually select + copy.
       setConflict({ ...conflict, manualCopyNeeded: true });
     }
@@ -1225,15 +1222,10 @@ function BlockEditorInner({
                 </p>
               </div>
             </div>
-            {conflict.text && !conflict.manualCopyNeeded && (
+            {!conflict.manualCopyNeeded && (
               <div className="rounded bg-amber-50 border border-amber-200 p-2 text-xs text-amber-900 mb-4">
                 編集中だったブロックの内容をコピーして、最新の内容に更新します。
                 コピーされた内容は必要な箇所にペーストで戻せます。
-              </div>
-            )}
-            {!conflict.text && (
-              <div className="rounded bg-gray-50 border border-gray-200 p-2 text-xs text-gray-700 mb-4">
-                編集中のブロックがありません。最新の内容に更新します。
               </div>
             )}
             {conflict.manualCopyNeeded && (
@@ -1263,7 +1255,7 @@ function BlockEditorInner({
                 <button
                   onClick={handleCopyAndRefresh}
                   className="rounded bg-theme-500 text-white px-4 py-1.5 text-sm font-medium hover:bg-theme-600"
-                >{conflict.text ? "編集内容をコピーして更新" : "最新を読み込む"}</button>
+                >編集内容をコピーして更新</button>
               )}
             </div>
           </div>
