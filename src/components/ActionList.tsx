@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { MarkdownContent, PageInfo, TagInfo } from "./BlockEditor";
 import GanttView from "./GanttView";
+import CalendarView, { Slot } from "./CalendarView";
 
 export interface ActionBlock {
   id: string;
@@ -106,7 +107,15 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
   const [actions, setActions] = useState<ActionBlock[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState<"list" | "gantt">("list");
+  const [tab, setTab] = useState<"list" | "gantt" | "schedule">("list");
+
+  // Calendar-related state
+  const sundayOf = (d: Date) => {
+    const r = new Date(d); r.setHours(0, 0, 0, 0); r.setDate(r.getDate() - r.getDay()); return r;
+  };
+  const [weekStart, setWeekStart] = useState<Date>(() => sundayOf(new Date()));
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const [latestByAction, setLatestByAction] = useState<Record<string, string>>({});
 
   const fetchActions = useCallback(async () => {
     setLoading(true);
@@ -118,13 +127,41 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
     setLoading(false);
   }, [pageId, showCompleted]);
 
+  const fetchSlots = useCallback(async () => {
+    try {
+      // Pull a window around the current week so drag-moves near the edges work smoothly.
+      const fromD = new Date(weekStart); fromD.setDate(fromD.getDate() - 7);
+      const toD = new Date(weekStart); toD.setDate(toD.getDate() + 21);
+      const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const res = await fetch(`/api/action-slots?from=${iso(fromD)}&to=${iso(toD)}`);
+      if (res.ok) {
+        const data = await res.json() as { slots: Slot[]; latestByAction: Record<string, string> };
+        setSlots(data.slots || []);
+        setLatestByAction(data.latestByAction || {});
+      }
+    } catch { /* silent */ }
+  }, [weekStart]);
+
   useEffect(() => { fetchActions(); }, [fetchActions, actionVersion]);
+  useEffect(() => { fetchSlots(); }, [fetchSlots, actionVersion]);
 
   useEffect(() => {
-    const handler = () => fetchActions();
+    const handler = () => { fetchActions(); fetchSlots(); };
     window.addEventListener("actions-changed", handler);
     return () => window.removeEventListener("actions-changed", handler);
-  }, [fetchActions]);
+  }, [fetchActions, fetchSlots]);
+
+  // Unscheduled set: unfinished + latest slot end is in the past or absent
+  const unscheduledActionIds = useMemo(() => {
+    const now = new Date();
+    const s = new Set<string>();
+    for (const a of actions) {
+      if (/^!done/i.test(a.content)) continue;
+      const latest = latestByAction[a.id];
+      if (!latest || new Date(latest.replace(" ", "T")) <= now) s.add(a.id);
+    }
+    return s;
+  }, [actions, latestByAction]);
 
   const toggleAction = async (action: ActionBlock) => {
     const isDone = /^!done/i.test(action.content);
@@ -164,6 +201,12 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
             >
               ガント
             </button>
+            <button
+              onClick={() => setTab("schedule")}
+              className={`px-3 py-1.5 text-sm border-b-2 transition ${tab === "schedule" ? "border-theme-500 text-theme-600 font-medium" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+            >
+              実施時間管理
+            </button>
           </div>
         )}
         <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none ml-auto pb-1">
@@ -188,10 +231,30 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
         <GanttView
           groups={sortedGroups}
           allPages={allPages}
+          unscheduledActionIds={unscheduledActionIds}
           onPageClick={onPageClick}
           onDateClick={onDateClick}
           onActionChange={() => { fetchActions(); if (onActionChange) onActionChange(); }}
           onToggleDone={toggleAction}
+        />
+      ) : tab === "schedule" && !compact ? (
+        <CalendarView
+          slots={slots}
+          latestByAction={latestByAction}
+          actions={actions}
+          allPages={allPages}
+          weekStart={weekStart}
+          setWeekStart={setWeekStart}
+          onSlotChange={() => { fetchSlots(); fetchActions(); }}
+          onToggleDone={toggleAction}
+          onOpenAction={(action) => {
+            if (action.page_id) {
+              const p = allPages.find((pp) => pp.id === action.page_id);
+              if (p) onPageClick(p.id, p.full_path || p.name);
+            } else if (action.date) {
+              onDateClick(action.date);
+            }
+          }}
         />
       ) : (
         sortedGroups.map((group) => (

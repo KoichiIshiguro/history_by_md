@@ -200,6 +200,25 @@ function initDb(db: Database.Database) {
     db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_meeting ON blocks(meeting_id)");
   }
 
+  // Migration: action_slots — calendar time-slots for when an action will actually be worked on.
+  // Independent from action's due_start/due_end (which represent the deadline range shown on the
+  // Gantt). An action can have multiple slots (same action scheduled for multiple time blocks).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS action_slots (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      action_block_id TEXT NOT NULL,
+      start_at TEXT NOT NULL,          -- ISO datetime, e.g. '2026-04-25T10:00:00'
+      end_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (action_block_id) REFERENCES blocks(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_slots_user_start ON action_slots(user_id, start_at);
+    CREATE INDEX IF NOT EXISTS idx_slots_block ON action_slots(action_block_id);
+  `);
+
   // Migration: api_usage_log for billing / usage dashboard
   db.exec(`
     CREATE TABLE IF NOT EXISTS api_usage_log (

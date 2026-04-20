@@ -7,6 +7,8 @@ import { PageInfo } from "./BlockEditor";
 interface Props {
   groups: ActionGroup[];
   allPages: PageInfo[];
+  /** Action ids that have no future calendar slot — rendered with darker bars. */
+  unscheduledActionIds?: Set<string>;
   onPageClick: (id: string, name: string) => void;
   onDateClick: (date: string) => void;
   onActionChange: () => void;
@@ -45,7 +47,7 @@ function todayISO(): string {
   return toISO(new Date());
 }
 
-export default function GanttView({ groups, allPages, onPageClick, onDateClick, onActionChange, onToggleDone }: Props) {
+export default function GanttView({ groups, allPages, unscheduledActionIds, onPageClick, onDateClick, onActionChange, onToggleDone }: Props) {
   // Build timeline range from all actions + today
   const { rangeStart, rangeEnd, totalDays } = useMemo(() => {
     let minDate = todayISO();
@@ -370,7 +372,12 @@ export default function GanttView({ groups, allPages, onPageClick, onDateClick, 
                       const barWidth = Math.max(DAY_WIDTH - 4, (endDays - startDays + 1) * DAY_WIDTH - 4);
                       const barTop = yOffset + 4;
                       const barHeight = ROW_HEIGHT - 8;
-                      const barColor = isDone ? "bg-green-300 border-green-400" : "bg-amber-300 border-amber-400";
+                      const isUnscheduled = unscheduledActionIds?.has(action.id);
+                      const barColor = isDone
+                        ? "bg-green-300 border-green-400"
+                        : isUnscheduled
+                          ? "bg-amber-500 border-amber-700 text-white" // darker — needs scheduling
+                          : "bg-amber-300 border-amber-400";
 
                       rows.push(
                         <div
