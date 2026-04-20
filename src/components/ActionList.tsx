@@ -69,10 +69,31 @@ export function groupActions(actions: ActionBlock[], allPages: PageInfo[]): Acti
       grouped[key].actions.push(action);
     }
   }
+  // Earliest due_end among unfinished actions in a group, falling back to "9999"
+  // if nothing has a deadline (pushes deadline-less groups to the bottom).
+  const earliestDue = (g: ActionGroup): string => {
+    const unfinished = g.actions.filter((a) => !/^!done/i.test(a.content));
+    const pool = unfinished.length > 0 ? unfinished : g.actions;
+    let best = "9999-99-99";
+    for (const a of pool) {
+      const d = a.due_end || "9999-99-98";
+      if (d < best) best = d;
+    }
+    return best;
+  };
+
   return Object.values(grouped).sort((a, b) => {
+    // Date groups first, then page groups (unchanged)
     if (a.isPage && !b.isPage) return 1;
     if (!a.isPage && b.isPage) return -1;
-    if (a.isPage && b.isPage) return a.label.localeCompare(b.label);
+    // Within page groups: ordered by the most-urgent action (earliest due_end) they contain.
+    // Tie-break on alphabetical label for stability.
+    if (a.isPage && b.isPage) {
+      const da = earliestDue(a), db = earliestDue(b);
+      if (da !== db) return da.localeCompare(db);
+      return a.label.localeCompare(b.label);
+    }
+    // Within date groups: stick with date desc (most recent date first).
     return b.label.localeCompare(a.label);
   });
 }
@@ -249,27 +270,12 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
 
       {loading ? (
         <div className="text-sm text-gray-400 py-4">読み込み中...</div>
-      ) : actions.length === 0 ? (
-        <div className="text-sm text-gray-400 py-4">
-          {showCompleted ? "アクションはありません" : "未完了のアクションはありません"}
-        </div>
-      ) : tab === "gantt" && !compact ? (
-        <GanttView
-          groups={sortedGroups}
-          allPages={allPages}
-          unscheduledActionIds={unscheduledActionIds}
-          onPageClick={onPageClick}
-          onDateClick={onDateClick}
-          onActionChange={() => { fetchActions(); if (onActionChange) onActionChange(); }}
-          onToggleDone={toggleAction}
-        />
       ) : tab === "schedule" && !compact ? (
+        // Schedule tab renders the calendar even when there are no actions —
+        // the sidebar will show "未完了のアクションはありません" instead.
         <>
           <CalendarView
             slots={(() => {
-              // When "完了済みも表示" is OFF, hide slots whose underlying action is !done.
-              // (The `actions` array already excludes done items in that mode, so any
-              // slot whose action_block_id isn't in it corresponds to a completed action.)
               if (showCompleted) return slots;
               const liveIds = new Set(actions.map((a) => a.id));
               return slots.filter((s) => liveIds.has(s.action_block_id));
@@ -296,6 +302,20 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
             onToggleDone={toggleAction}
           />
         </>
+      ) : actions.length === 0 ? (
+        <div className="text-sm text-gray-400 py-4">
+          {showCompleted ? "アクションはありません" : "未完了のアクションはありません"}
+        </div>
+      ) : tab === "gantt" && !compact ? (
+        <GanttView
+          groups={sortedGroups}
+          allPages={allPages}
+          unscheduledActionIds={unscheduledActionIds}
+          onPageClick={onPageClick}
+          onDateClick={onDateClick}
+          onActionChange={() => { fetchActions(); if (onActionChange) onActionChange(); }}
+          onToggleDone={toggleAction}
+        />
       ) : (
         sortedGroups.map((group) => (
           <div key={group.key} className="mb-4">

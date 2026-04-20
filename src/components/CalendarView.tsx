@@ -854,24 +854,32 @@ export function CalendarSidebar({ actions, latestByAction, onToggleDone }: Sideb
 
       {/* Action sections */}
       <div className="overflow-y-auto flex-1">
-        <div className="border-b border-gray-100">
-          <div className="px-3 py-1 bg-amber-50 text-xs font-semibold text-amber-800 sticky top-0">
-            未設定 <span className="font-normal text-gray-500">({sections.unscheduled.length})</span>
+        {sections.unscheduled.length === 0 && sections.scheduled.length === 0 ? (
+          <div className="px-3 py-6 text-xs text-gray-400 text-center">
+            未完了のアクションはありません
           </div>
-          {sections.unscheduled.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">すべて設定済み</div>}
-          {sections.unscheduled.map((a) => (
-            <SidebarActionItem key={a.id} action={a} onPointerDown={startActionDrag} onToggleDone={onToggleDone} />
-          ))}
-        </div>
-        <div>
-          <div className="px-3 py-1 bg-green-50 text-xs font-semibold text-green-800 sticky top-0">
-            設定済み <span className="font-normal text-gray-500">({sections.scheduled.length})</span>
-          </div>
-          {sections.scheduled.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">まだありません</div>}
-          {sections.scheduled.map((a) => (
-            <SidebarActionItem key={a.id} action={a} onPointerDown={startActionDrag} onToggleDone={onToggleDone} />
-          ))}
-        </div>
+        ) : (
+          <>
+            <div className="border-b border-gray-100">
+              <div className="px-3 py-1 bg-amber-50 text-xs font-semibold text-amber-800 sticky top-0">
+                未設定 <span className="font-normal text-gray-500">({sections.unscheduled.length})</span>
+              </div>
+              {sections.unscheduled.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">すべて設定済み</div>}
+              {sections.unscheduled.map((a) => (
+                <SidebarActionItem key={a.id} action={a} onPointerDown={startActionDrag} onToggleDone={onToggleDone} />
+              ))}
+            </div>
+            <div>
+              <div className="px-3 py-1 bg-green-50 text-xs font-semibold text-green-800 sticky top-0">
+                設定済み <span className="font-normal text-gray-500">({sections.scheduled.length})</span>
+              </div>
+              {sections.scheduled.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">まだありません</div>}
+              {sections.scheduled.map((a) => (
+                <SidebarActionItem key={a.id} action={a} onPointerDown={startActionDrag} onToggleDone={onToggleDone} />
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
