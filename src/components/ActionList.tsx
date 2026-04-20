@@ -69,32 +69,30 @@ export function groupActions(actions: ActionBlock[], allPages: PageInfo[]): Acti
       grouped[key].actions.push(action);
     }
   }
-  // Earliest due_end among unfinished actions in a group, falling back to "9999"
-  // if nothing has a deadline (pushes deadline-less groups to the bottom).
-  const earliestDue = (g: ActionGroup): string => {
+  // "Urgency key" per group — the earliest due_end among unfinished actions.
+  // Groups with no unfinished actions are pushed to the bottom ("all done" state).
+  // Groups with no deadlines are placed just before all-done ones.
+  const urgencyKey = (g: ActionGroup): string => {
     const unfinished = g.actions.filter((a) => !/^!done/i.test(a.content));
-    const pool = unfinished.length > 0 ? unfinished : g.actions;
-    let best = "9999-99-99";
-    for (const a of pool) {
-      const d = a.due_end || "9999-99-98";
-      if (d < best) best = d;
+    if (unfinished.length === 0) return "Z9999-99-99"; // all done → bottom
+    let best = "Y9999-99-99"; // no-deadline → just above all-done
+    for (const a of unfinished) {
+      if (!a.due_end) continue;
+      // Prefix unfinished-with-deadline with "A" so they sort above the "Y"/"Z" bands.
+      const key = `A${a.due_end}`;
+      if (key < best) best = key;
     }
     return best;
   };
 
   return Object.values(grouped).sort((a, b) => {
-    // Date groups first, then page groups (unchanged)
-    if (a.isPage && !b.isPage) return 1;
-    if (!a.isPage && b.isPage) return -1;
-    // Within page groups: ordered by the most-urgent action (earliest due_end) they contain.
-    // Tie-break on alphabetical label for stability.
-    if (a.isPage && b.isPage) {
-      const da = earliestDue(a), db = earliestDue(b);
-      if (da !== db) return da.localeCompare(db);
-      return a.label.localeCompare(b.label);
-    }
-    // Within date groups: stick with date desc (most recent date first).
-    return b.label.localeCompare(a.label);
+    // Unified urgency sort across dates and pages — most-pressing action first.
+    const ka = urgencyKey(a), kb = urgencyKey(b);
+    if (ka !== kb) return ka.localeCompare(kb);
+    // Stable tie-break: date groups by date desc, pages alphabetical.
+    if (!a.isPage && !b.isPage) return b.label.localeCompare(a.label);
+    if (a.isPage && b.isPage) return a.label.localeCompare(b.label);
+    return a.isPage ? 1 : -1; // date before page on ties
   });
 }
 
