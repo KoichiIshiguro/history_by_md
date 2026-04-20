@@ -187,6 +187,17 @@ export default function CalendarView({
   const gridRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 9 * HOUR_HEIGHT; }, []);
 
+  // "Now" indicator — a red horizontal line on today's column, Google-Calendar style.
+  // Recomputes every minute to keep the line moving.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+  const now = new Date(nowTick);
+  const todayIdx = days.findIndex((d) => d.toDateString() === now.toDateString());
+  const nowTopPx = ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_HEIGHT;
+
   const [drag, setDrag] = useState<DragState>(null);
   const [editingBusy, setEditingBusy] = useState<string | null>(null); // base id being edited
 
@@ -470,6 +481,19 @@ export default function CalendarView({
                   <div style={{ position: "absolute", left: 0, right: 0, top: HOUR_HEIGHT / 2, borderTop: "1px dotted #f3f4f6" }} />
                 </div>
               ))}
+              {/* "Now" indicator on today's column */}
+              {todayIdx === dayIdx && (
+                <>
+                  <div
+                    className="absolute left-0 right-0 pointer-events-none"
+                    style={{ top: nowTopPx, height: 2, backgroundColor: "#ef4444", zIndex: 20 }}
+                  />
+                  <div
+                    className="absolute pointer-events-none rounded-full"
+                    style={{ top: nowTopPx - 5, left: -5, width: 10, height: 10, backgroundColor: "#ef4444", zIndex: 21 }}
+                  />
+                </>
+              )}
               {/* Action + Busy slots, lane-packed together */}
               {(() => {
                 // Combine with kind markers for packing
