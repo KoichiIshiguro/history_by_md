@@ -338,15 +338,48 @@ export default function CalendarView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag]);
 
-  const handleActionSlotPointerDown = (e: React.PointerEvent, slot: Slot, dayIdx: number) => {
+  /**
+   * Threshold-based drag promoter. Pointerdown on a slot body doesn't
+   * immediately set drag state (that would unmount the slot and swallow
+   * the browser's click/dblclick events). Instead we attach scoped
+   * listeners that promote to a real drag only after the pointer moves
+   * past CLICK_THRESHOLD_PX. If the user releases without moving, the
+   * click/dblclick events fire naturally on the still-mounted element.
+   */
+  const CLICK_THRESHOLD_PX = 5;
+  const armPendingMove = (e: React.PointerEvent, promote: () => void) => {
     e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const onMove = (ev: PointerEvent) => {
+      const dx = Math.abs(ev.clientX - startX);
+      const dy = Math.abs(ev.clientY - startY);
+      if (dx + dy > CLICK_THRESHOLD_PX) {
+        cleanup();
+        promote(); // now sets the real `drag` state; main useEffect takes over
+      }
+    };
+    const onUp = () => { cleanup(); };
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+
+  const handleActionSlotPointerDown = (e: React.PointerEvent, slot: Slot, dayIdx: number) => {
     const s = parseISO(slot.start_at);
     const en = parseISO(slot.end_at);
     const origStartMin = s.getHours() * 60 + s.getMinutes();
     const origEndMin = en.getHours() * 60 + en.getMinutes();
     const pt = getMinutesFromPoint(e);
     const grabOffsetMin = pt ? pt.minutes - origStartMin : 0;
-    setDrag({ mode: "move-action", slotId: slot.id, origStartMin, origEndMin, origDay: dayIdx, grabOffsetMin, curDay: dayIdx, curStartMin: origStartMin, curEndMin: origEndMin });
+    armPendingMove(e, () => {
+      setDrag({ mode: "move-action", slotId: slot.id, origStartMin, origEndMin, origDay: dayIdx, grabOffsetMin, curDay: dayIdx, curStartMin: origStartMin, curEndMin: origEndMin });
+    });
   };
   const handleActionResizePointerDown = (e: React.PointerEvent, slot: Slot, dayIdx: number, edge: "top" | "bottom") => {
     e.stopPropagation();
@@ -356,7 +389,6 @@ export default function CalendarView({
   };
 
   const handleBusySlotPointerDown = (e: React.PointerEvent, bs: BusySlot, dayIdx: number) => {
-    e.stopPropagation();
     const s = parseISO(bs.start_at);
     const en = parseISO(bs.end_at);
     const origStartMin = s.getHours() * 60 + s.getMinutes();
@@ -364,7 +396,9 @@ export default function CalendarView({
     const pt = getMinutesFromPoint(e);
     const grabOffsetMin = pt ? pt.minutes - origStartMin : 0;
     const origDate = bs.start_at.slice(0, 10);
-    setDrag({ mode: "move-busy", baseId: bs.id, origStartMin, origEndMin, origDay: dayIdx, grabOffsetMin, curDay: dayIdx, curStartMin: origStartMin, curEndMin: origEndMin, origDate });
+    armPendingMove(e, () => {
+      setDrag({ mode: "move-busy", baseId: bs.id, origStartMin, origEndMin, origDay: dayIdx, grabOffsetMin, curDay: dayIdx, curStartMin: origStartMin, curEndMin: origEndMin, origDate });
+    });
   };
   const handleBusyResizePointerDown = (e: React.PointerEvent, bs: BusySlot, dayIdx: number, edge: "top" | "bottom") => {
     e.stopPropagation();
@@ -588,8 +622,8 @@ function renderBusySlot(
       style={{ position: "absolute", left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, top, height, zIndex: dragging ? 10 : 1 }}
       className={`rounded shadow-sm border select-none cursor-grab active:cursor-grabbing bg-gray-200 border-gray-400 text-gray-700 ${dragging ? "opacity-80" : "hover:brightness-95"}`}
       onPointerDown={(e) => onSlotPointerDown(e, bs, dayIdx)}
-      onClick={(e) => { if (!dragging) onClickSlot(bs, e); }}
-      title={`${label}\n${title}${recurLabel}`}
+      onDoubleClick={(e) => { if (!dragging) onClickSlot(bs, e); }}
+      title={`${label}\n${title}${recurLabel}（ダブルクリックで編集）`}
     >
       <div className="absolute top-0 left-0 right-0 h-1.5 cursor-ns-resize hover:bg-black/10 rounded-t" onPointerDown={(e) => onResizePointerDown(e, bs, dayIdx, "top")} />
       <div className="absolute bottom-0 left-0 right-0 h-1.5 cursor-ns-resize hover:bg-black/10 rounded-b" onPointerDown={(e) => onResizePointerDown(e, bs, dayIdx, "bottom")} />
@@ -671,12 +705,13 @@ function BusyEditModal({ baseId, onClose, onSaved, onDeleted }: { baseId: string
         {loading ? <div className="py-8 text-center text-sm text-gray-400">読み込み中...</div> : !data ? <div className="py-8 text-center text-sm text-red-500">見つかりませんでした</div> : (
           <div className="space-y-3 text-sm">
             <div>
-              <label className="text-xs font-medium text-gray-600 block mb-1">タイトル</label>
+              <label className="text-xs font-medium text-gray-600 block mb-1">タイトル（デフォルト: 設定不可）</label>
               <input
                 type="text" value={data.title} onChange={(e) => setData({ ...data, title: e.target.value })}
-                placeholder="例: 定例MTG"
+                placeholder="設定不可"
                 className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:ring-2 focus:ring-theme-400 focus:outline-none"
               />
+              <div className="text-[10px] text-gray-400 mt-0.5">例: 定例MTG、打ち合わせ、外出 など自由に設定できます</div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
