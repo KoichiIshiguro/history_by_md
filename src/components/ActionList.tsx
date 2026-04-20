@@ -69,30 +69,25 @@ export function groupActions(actions: ActionBlock[], allPages: PageInfo[]): Acti
       grouped[key].actions.push(action);
     }
   }
-  // "Urgency key" per group — the earliest due_end among unfinished actions.
-  // Groups with no unfinished actions are pushed to the bottom ("all done" state).
-  // Groups with no deadlines are placed just before all-done ones.
+  // Earliest unfinished due_end in a group. Groups with no unfinished
+  // deadline (everything done, or no deadlines) sort to the bottom.
   const urgencyKey = (g: ActionGroup): string => {
-    const unfinished = g.actions.filter((a) => !/^!done/i.test(a.content));
-    if (unfinished.length === 0) return "Z9999-99-99"; // all done → bottom
-    let best = "Y9999-99-99"; // no-deadline → just above all-done
-    for (const a of unfinished) {
+    let best: string | null = null;
+    for (const a of g.actions) {
+      if (/^!done/i.test(a.content)) continue;
       if (!a.due_end) continue;
-      // Prefix unfinished-with-deadline with "A" so they sort above the "Y"/"Z" bands.
-      const key = `A${a.due_end}`;
-      if (key < best) best = key;
+      if (best === null || a.due_end < best) best = a.due_end;
     }
-    return best;
+    return best ?? "9999-12-31";
   };
 
   return Object.values(grouped).sort((a, b) => {
-    // Unified urgency sort across dates and pages — most-pressing action first.
     const ka = urgencyKey(a), kb = urgencyKey(b);
     if (ka !== kb) return ka.localeCompare(kb);
-    // Stable tie-break: date groups by date desc, pages alphabetical.
+    // Stable tie-break: date groups by date desc, pages alphabetical
     if (!a.isPage && !b.isPage) return b.label.localeCompare(a.label);
     if (a.isPage && b.isPage) return a.label.localeCompare(b.label);
-    return a.isPage ? 1 : -1; // date before page on ties
+    return 0;
   });
 }
 
