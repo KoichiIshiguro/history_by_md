@@ -122,6 +122,7 @@ export default function MeetingWorkspace({
     setAttendeeInput("");
     setUploading(false);
     setUploadError("");
+    setPastedText("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -140,27 +141,58 @@ export default function MeetingWorkspace({
   };
 
   // ─── New upload ──────
+  // Input mode: "audio" = file upload → Whisper → Gemini; "text" = pasted text → Gemini only
+  const [inputMode, setInputMode] = useState<"audio" | "text">("audio");
+  const [pastedText, setPastedText] = useState("");
+
   const startUpload = async () => {
-    if (!file) { alert("音声ファイルを選択してください"); return; }
+    if (inputMode === "audio") {
+      if (!file) { alert("音声ファイルを選択してください"); return; }
+    } else {
+      if (!pastedText.trim()) { alert("テキストを入力してください"); return; }
+    }
     setUploading(true);
     setUploadError("");
     try {
-      const form = new FormData();
-      form.append("file", file);
-      if (title.trim()) form.append("title", title.trim());
-      form.append("date", meetingDate);
-      form.append("language", "ja");
-      form.append("attendees", JSON.stringify(attendees));
-      form.append("removeFillers", removeFillers ? "1" : "0");
-      const res = await fetch("/api/meetings/transcribe", { method: "POST", body: form });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `アップロードエラー (HTTP ${res.status})`);
+      let meetingId: string;
+      if (inputMode === "audio") {
+        const form = new FormData();
+        form.append("file", file!);
+        if (title.trim()) form.append("title", title.trim());
+        form.append("date", meetingDate);
+        form.append("language", "ja");
+        form.append("attendees", JSON.stringify(attendees));
+        form.append("removeFillers", removeFillers ? "1" : "0");
+        const res = await fetch("/api/meetings/transcribe", { method: "POST", body: form });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `アップロードエラー (HTTP ${res.status})`);
+        }
+        const data = await res.json();
+        meetingId = data.meetingId;
+      } else {
+        // Text-only path: skip Whisper, just polish the pasted text
+        const res = await fetch("/api/meetings/create-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: pastedText,
+            title: title.trim() || undefined,
+            date: meetingDate,
+            attendees,
+            removeFillers,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `送信エラー (HTTP ${res.status})`);
+        }
+        const data = await res.json();
+        meetingId = data.meetingId;
       }
-      const { meetingId } = (await res.json()) as { meetingId: string };
       resetForm();
       onReloadSignal();
-      onSelectMeeting(meetingId); // jump to the new meeting's view
+      onSelectMeeting(meetingId);
     } catch (err) {
       setUploadError((err as Error).message);
       setUploading(false);
@@ -215,6 +247,8 @@ export default function MeetingWorkspace({
     return (
       <div className="mx-auto max-w-2xl">
         <NewMeetingForm
+          inputMode={inputMode} setInputMode={setInputMode}
+          pastedText={pastedText} setPastedText={setPastedText}
           file={file} setFile={setFile}
           title={title} setTitle={setTitle}
           meetingDate={meetingDate} setMeetingDate={setMeetingDate}
@@ -258,12 +292,14 @@ export default function MeetingWorkspace({
             <div className="flex-1">
               <div className="text-sm font-medium text-blue-900">処理中...</div>
               <div className="text-xs text-blue-700 mt-1">
-                {detail.status === "polishing" ? "AI が文字起こしを清書中です..." :
-                 detail.status === "transcribed" ? "文字起こし完了。清書を開始中..." :
-                 "文字起こしを実行中..."}
+                {detail.audio_filename
+                  ? (detail.status === "polishing" ? "AI が文字起こしを清書中です..." :
+                     detail.status === "transcribed" ? "文字起こし完了。清書を開始中..." :
+                     "文字起こしを実行中...")
+                  : "AI が清書中です..."}
               </div>
               <div className="text-[11px] text-blue-600 mt-2 rounded bg-white/60 px-2 py-1.5">
-                ✅ アップロードは完了しています。<br />
+                ✅ {detail.audio_filename ? "アップロード" : "テキスト送信"}は完了しています。<br />
                 <b>このブラウザを閉じても処理は続行されます</b>。
               </div>
             </div>
@@ -330,7 +366,7 @@ export default function MeetingWorkspace({
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <div className="text-xs font-medium text-gray-600 mb-1">文字起こし（生）</div>
+            <div className="text-xs font-medium text-gray-600 mb-1">{detail.audio_filename ? "文字起こし（生）" : "元のテキスト"}</div>
             <div className="rounded border border-gray-200 bg-gray-50 p-2 text-xs text-gray-700 whitespace-pre-wrap max-h-[60vh] overflow-auto">
               {detail.raw_transcript || ""}
             </div>
@@ -403,12 +439,26 @@ export default function MeetingWorkspace({
 // ─── Sub components ───────────────────────────────────────────
 
 function NewMeetingForm(props: any) {
-  const { file, setFile, title, setTitle, meetingDate, setMeetingDate, attendees, setAttendees,
+  const { inputMode, setInputMode, pastedText, setPastedText,
+    file, setFile, title, setTitle, meetingDate, setMeetingDate, attendees, setAttendees,
     attendeeInput, setAttendeeInput, removeFillers, setRemoveFillers, fileInputRef, addAttendee,
     onStart, busy, error } = props;
+  const disabled = busy || (inputMode === "audio" ? !file : !pastedText.trim());
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
       <h2 className="text-lg font-semibold text-gray-800">新しい会議録</h2>
+
+      {/* Input mode tabs */}
+      <div className="flex border-b border-gray-200">
+        <button
+          onClick={() => setInputMode("audio")}
+          className={`px-3 py-1.5 text-sm border-b-2 transition ${inputMode === "audio" ? "border-theme-500 text-theme-600 font-medium" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+        >🎙️ 音声ファイル</button>
+        <button
+          onClick={() => setInputMode("text")}
+          className={`px-3 py-1.5 text-sm border-b-2 transition ${inputMode === "text" ? "border-theme-500 text-theme-600 font-medium" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+        >📝 テキスト貼り付け</button>
+      </div>
 
       <div>
         <label className="text-xs font-medium text-gray-600 block mb-1">タイトル（空の場合はAIが自動生成）</label>
@@ -439,35 +489,56 @@ function NewMeetingForm(props: any) {
           className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:ring-2 focus:ring-theme-400 focus:outline-none" />
       </div>
 
-      <div>
-        <label className="text-xs font-medium text-gray-600 block mb-1">音声ファイル（最大500MB、自動圧縮）</label>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="audio/*,.m4a,.mp3,.wav,.webm,.mp4,.flac,.aiff,.aif,.ogg,.opus"
-          onChange={(e) => {
-            const f = e.target.files?.[0] ?? null;
-            if (f && f.size > 500 * 1024 * 1024) { alert("上限 500MB を超えています。"); if (fileInputRef.current) fileInputRef.current.value = ""; return; }
-            setFile(f);
-          }}
-          className="block w-full text-sm text-gray-600 file:mr-3 file:rounded file:border-0 file:bg-theme-100 file:px-3 file:py-1.5 file:text-theme-700 hover:file:bg-theme-200" />
-        {file && <div className="text-xs text-gray-500 mt-1">{file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)</div>}
-      </div>
+      {inputMode === "audio" ? (
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">音声ファイル（最大500MB、自動圧縮）</label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="audio/*,.m4a,.mp3,.wav,.webm,.mp4,.flac,.aiff,.aif,.ogg,.opus"
+            onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              if (f && f.size > 500 * 1024 * 1024) { alert("上限 500MB を超えています。"); if (fileInputRef.current) fileInputRef.current.value = ""; return; }
+              setFile(f);
+            }}
+            className="block w-full text-sm text-gray-600 file:mr-3 file:rounded file:border-0 file:bg-theme-100 file:px-3 file:py-1.5 file:text-theme-700 hover:file:bg-theme-200" />
+          {file && <div className="text-xs text-gray-500 mt-1">{file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)</div>}
+        </div>
+      ) : (
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">会議メモ（テキスト）</label>
+          <textarea
+            value={pastedText}
+            onChange={(e) => setPastedText(e.target.value)}
+            placeholder="会議中にとったメモを貼り付けてください。断片的・口語的でも、AIが読みやすく整えます（要約はしません）。"
+            rows={10}
+            className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm font-[inherit] focus:ring-2 focus:ring-theme-400 focus:outline-none resize-y"
+          />
+          <div className="text-[10px] text-gray-400 mt-0.5 flex justify-between">
+            <span>{pastedText.length.toLocaleString()} 文字 / 300,000</span>
+            <span>音声はアップロードされません。Geminiで整形のみ行います。</span>
+          </div>
+        </div>
+      )}
 
       <label className="flex items-center gap-2 text-xs text-gray-600 select-none">
         <input type="checkbox" checked={removeFillers} onChange={(e) => setRemoveFillers(e.target.checked)} className="rounded border-gray-300" />
         フィラー（「えーと」「あのー」等）を除去する
       </label>
 
-      <button onClick={onStart} disabled={!file || busy}
+      <button onClick={onStart} disabled={disabled}
         className="w-full rounded bg-theme-500 text-white py-2 text-sm font-medium hover:bg-theme-600 disabled:opacity-50 disabled:cursor-not-allowed">
-        {busy ? "アップロード中..." : "アップロードして処理開始"}
+        {busy
+          ? (inputMode === "audio" ? "アップロード中..." : "送信中...")
+          : (inputMode === "audio" ? "アップロードして処理開始" : "テキストを清書")}
       </button>
 
       {error && <div className="text-xs text-red-600">{error}</div>}
 
       <div className="text-[11px] text-gray-500 text-center">
-        アップロード完了後、文字起こし・清書はサーバー側で実行されます（ブラウザを閉じてもOK）
+        {inputMode === "audio"
+          ? "アップロード完了後、文字起こし・清書はサーバー側で実行されます（ブラウザを閉じてもOK）"
+          : "送信後、清書はサーバー側で実行されます（ブラウザを閉じてもOK）"}
       </div>
     </div>
   );
