@@ -200,6 +200,25 @@ function initDb(db: Database.Database) {
     db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_meeting ON blocks(meeting_id)");
   }
 
+  // Migration: busy_slots — time windows blocked off from action scheduling
+  // (meetings, out-of-office, etc.). Optionally recurring.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS busy_slots (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      start_at TEXT NOT NULL,           -- ISO local
+      end_at TEXT NOT NULL,
+      recurrence TEXT NOT NULL DEFAULT 'none',  -- 'none' | 'daily' | 'weekly'
+      weekdays TEXT,                    -- JSON array '[1,2,3,4,5]' for weekly
+      recur_until TEXT,                 -- YYYY-MM-DD; null = forever
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_busy_user ON busy_slots(user_id, start_at);
+  `);
+
   // Migration: action_slots — calendar time-slots for when an action will actually be worked on.
   // Independent from action's due_start/due_end (which represent the deadline range shown on the
   // Gantt). An action can have multiple slots (same action scheduled for multiple time blocks).

@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { MarkdownContent, PageInfo, TagInfo } from "./BlockEditor";
 import GanttView from "./GanttView";
-import CalendarView, { Slot } from "./CalendarView";
+import CalendarView, { Slot, BusySlot, CalendarSidebar } from "./CalendarView";
 
 export interface ActionBlock {
   id: string;
@@ -35,6 +36,9 @@ interface Props {
   onDateClick: (date: string) => void;
   onActionChange?: () => void;
   actionVersion?: number;
+  /** Lifted tab state. If provided, controls which tab is shown and notifies on change. */
+  activeTab?: "list" | "gantt" | "schedule";
+  onTabChange?: (tab: "list" | "gantt" | "schedule") => void;
 }
 
 /**
@@ -103,11 +107,17 @@ export function formatDuePill(dueStart: string | null | undefined, dueEnd: strin
   return omitStartYear ? `${sy}/${sm}/${sd}-${endFmt}` : `${startFmt}-${endFmt}`;
 }
 
-export default function ActionList({ pageId, allPages, allTags, onPageClick, onTagClick, onDateClick, onActionChange, actionVersion }: Props) {
+export default function ActionList({ pageId, allPages, allTags, onPageClick, onTagClick, onDateClick, onActionChange, actionVersion, activeTab, onTabChange }: Props) {
   const [actions, setActions] = useState<ActionBlock[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState<"list" | "gantt" | "schedule">("list");
+  const [internalTab, setInternalTab] = useState<"list" | "gantt" | "schedule">("list");
+  const tab = activeTab ?? internalTab;
+  const setTab = (t: "list" | "gantt" | "schedule") => {
+    setInternalTab(t);
+    onTabChange?.(t);
+  };
+  const [busySlots, setBusySlots] = useState<BusySlot[]>([]);
 
   // Calendar-related state
   const sundayOf = (d: Date) => {
@@ -129,7 +139,6 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
 
   const fetchSlots = useCallback(async () => {
     try {
-      // Pull a window around the current week so drag-moves near the edges work smoothly.
       const fromD = new Date(weekStart); fromD.setDate(fromD.getDate() - 7);
       const toD = new Date(weekStart); toD.setDate(toD.getDate() + 21);
       const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -142,14 +151,28 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
     } catch { /* silent */ }
   }, [weekStart]);
 
+  const fetchBusySlots = useCallback(async () => {
+    try {
+      const fromD = new Date(weekStart); fromD.setDate(fromD.getDate() - 7);
+      const toD = new Date(weekStart); toD.setDate(toD.getDate() + 21);
+      const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const res = await fetch(`/api/busy-slots?from=${iso(fromD)}&to=${iso(toD)}`);
+      if (res.ok) {
+        const data = await res.json() as { busySlots: BusySlot[] };
+        setBusySlots(data.busySlots || []);
+      }
+    } catch { /* silent */ }
+  }, [weekStart]);
+
   useEffect(() => { fetchActions(); }, [fetchActions, actionVersion]);
   useEffect(() => { fetchSlots(); }, [fetchSlots, actionVersion]);
+  useEffect(() => { fetchBusySlots(); }, [fetchBusySlots, actionVersion]);
 
   useEffect(() => {
-    const handler = () => { fetchActions(); fetchSlots(); };
+    const handler = () => { fetchActions(); fetchSlots(); fetchBusySlots(); };
     window.addEventListener("actions-changed", handler);
     return () => window.removeEventListener("actions-changed", handler);
-  }, [fetchActions, fetchSlots]);
+  }, [fetchActions, fetchSlots, fetchBusySlots]);
 
   // Unscheduled set: unfinished + latest slot end is in the past or absent
   const unscheduledActionIds = useMemo(() => {
@@ -238,24 +261,31 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
           onToggleDone={toggleAction}
         />
       ) : tab === "schedule" && !compact ? (
-        <CalendarView
-          slots={slots}
-          latestByAction={latestByAction}
-          actions={actions}
-          allPages={allPages}
-          weekStart={weekStart}
-          setWeekStart={setWeekStart}
-          onSlotChange={() => { fetchSlots(); fetchActions(); }}
-          onToggleDone={toggleAction}
-          onOpenAction={(action) => {
-            if (action.page_id) {
-              const p = allPages.find((pp) => pp.id === action.page_id);
-              if (p) onPageClick(p.id, p.full_path || p.name);
-            } else if (action.date) {
-              onDateClick(action.date);
-            }
-          }}
-        />
+        <>
+          <CalendarView
+            slots={slots}
+            busySlots={busySlots}
+            actions={actions}
+            weekStart={weekStart}
+            setWeekStart={setWeekStart}
+            onSlotChange={() => { fetchSlots(); fetchActions(); }}
+            onBusyChange={() => { fetchBusySlots(); }}
+            onToggleDone={toggleAction}
+            onOpenAction={(action) => {
+              if (action.page_id) {
+                const p = allPages.find((pp) => pp.id === action.page_id);
+                if (p) onPageClick(p.id, p.full_path || p.name);
+              } else if (action.date) {
+                onDateClick(action.date);
+              }
+            }}
+          />
+          <CalendarSidebarPortal
+            actions={actions}
+            latestByAction={latestByAction}
+            onToggleDone={toggleAction}
+          />
+        </>
       ) : (
         sortedGroups.map((group) => (
           <div key={group.key} className="mb-4">
@@ -346,4 +376,24 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
       )}
     </div>
   );
+}
+
+/**
+ * Renders CalendarSidebar via a React Portal into the DOM node provided by
+ * MainApp (id="calendar-sidebar-mount"). This lets the schedule-tab sidebar
+ * appear in the app's right sidebar area — visually consistent with the
+ * page-view ActionList sidebar — while keeping its data/state colocated
+ * with this component.
+ */
+function CalendarSidebarPortal(props: { actions: ActionBlock[]; latestByAction: Record<string, string>; onToggleDone: (a: ActionBlock) => void }) {
+  const [mount, setMount] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const find = () => setMount(document.getElementById("calendar-sidebar-mount"));
+    find();
+    // In case the mount div is rendered asynchronously
+    const id = setTimeout(find, 0);
+    return () => clearTimeout(id);
+  }, []);
+  if (!mount) return null;
+  return createPortal(<CalendarSidebar {...props} />, mount);
 }

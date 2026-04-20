@@ -58,6 +58,7 @@ export default function MainApp({ user, isAdmin }: Props) {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [selectedTemplateName, setSelectedTemplateName] = useState("");
   const [actionVersion, setActionVersion] = useState(0);
+  const [actionsTab, setActionsTab] = useState<"list" | "gantt" | "schedule">("list");
   const bumpActionVersion = useCallback(() => setActionVersion((v) => v + 1), []);
   const [reloading, setReloading] = useState(false);
 
@@ -283,7 +284,10 @@ export default function MainApp({ user, isAdmin }: Props) {
     if (isMobile) setSidebarOpen(false);
   };
 
-  const hasRightSidebar = (viewMode === "page" && !!selectedPageId) || viewMode === "meetings";
+  const hasRightSidebar =
+    (viewMode === "page" && !!selectedPageId)
+    || viewMode === "meetings"
+    || (viewMode === "actions" && actionsTab === "schedule");
 
   return (
     <div ref={mainRef} className="flex h-screen overflow-hidden" suppressHydrationWarning>
@@ -546,6 +550,8 @@ export default function MainApp({ user, isAdmin }: Props) {
                 onTagClick={handleSelectTag}
                 onDateClick={handleSelectDate}
                 actionVersion={actionVersion}
+                activeTab={actionsTab}
+                onTabChange={setActionsTab}
               />
             ) : viewMode === "admin" && isAdmin ? (
               <AdminPanel />
@@ -577,6 +583,9 @@ export default function MainApp({ user, isAdmin }: Props) {
                   onCreateNew={() => setSelectedMeetingId(null)}
                   reloadSignal={meetingsReloadSignal}
                 />
+              ) : viewMode === "actions" && actionsTab === "schedule" ? (
+                // Portal target: the CalendarSidebar rendered by ActionList lands here
+                <div id="calendar-sidebar-mount" className="h-full" />
               ) : (
                 <div className="overflow-auto p-3 flex-1">
                   <h3 className="text-sm font-semibold text-theme-600 mb-2">アクション</h3>
@@ -602,7 +611,7 @@ export default function MainApp({ user, isAdmin }: Props) {
               }`}
             >
               <div className="flex items-center justify-between mb-3 p-3">
-                <h3 className="text-sm font-semibold text-theme-600">{viewMode === "meetings" ? "会議録" : "アクション"}</h3>
+                <h3 className="text-sm font-semibold text-theme-600">{viewMode === "meetings" ? "会議録" : viewMode === "actions" && actionsTab === "schedule" ? "カレンダー" : "アクション"}</h3>
                 <button onClick={() => setRightSidebarOpen(false)} className="rounded p-1 text-gray-400 hover:bg-theme-100">
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -616,6 +625,8 @@ export default function MainApp({ user, isAdmin }: Props) {
                   onCreateNew={() => { setSelectedMeetingId(null); setRightSidebarOpen(false); }}
                   reloadSignal={meetingsReloadSignal}
                 />
+              ) : viewMode === "actions" && actionsTab === "schedule" ? (
+                <div id="calendar-sidebar-mount" className="h-full" />
               ) : (
                 <div className="p-3">
                   <ActionList
