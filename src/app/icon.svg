@@ -1,15 +1,12 @@
+<!-- Simplified favicon variant. Same color palette and notebook motif as
+     the PWA icon (public/icon.svg), but with chunky elements so it stays
+     recognizable at 16x16 / 32x32 browser tab sizes. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" rx="96" fill="#f97316"/>
-  <rect x="96" y="80" width="320" height="352" rx="24" fill="white" opacity="0.95"/>
-  <rect x="96" y="80" width="48" height="352" rx="12" fill="#f97316" opacity="0.15"/>
-  <circle cx="152" cy="160" r="8" fill="#f97316"/>
-  <line x1="176" y1="160" x2="360" y2="160" stroke="#f97316" stroke-width="6" stroke-linecap="round"/>
-  <circle cx="152" cy="210" r="8" fill="#fdba74"/>
-  <line x1="176" y1="210" x2="320" y2="210" stroke="#fed7aa" stroke-width="6" stroke-linecap="round"/>
-  <circle cx="152" cy="260" r="8" fill="#fdba74"/>
-  <line x1="176" y1="260" x2="340" y2="260" stroke="#fed7aa" stroke-width="6" stroke-linecap="round"/>
-  <rect x="176" y="300" width="80" height="32" rx="6" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
-  <rect x="272" y="300" width="96" height="32" rx="6" fill="#ffedd5" stroke="#fb923c" stroke-width="2"/>
-  <text x="196" y="322" font-size="18" fill="#d97706" font-weight="600" font-family="sans-serif">#tag</text>
-  <text x="282" y="322" font-size="16" fill="#ea580c" font-weight="600" font-family="sans-serif">{{page}}</text>
+  <rect x="112" y="96" width="288" height="320" rx="32" fill="white"/>
+  <rect x="112" y="96" width="40" height="320" rx="12" fill="#f97316" opacity="0.2"/>
+  <rect x="184" y="168" width="184" height="28" rx="10" fill="#f97316"/>
+  <rect x="184" y="232" width="152" height="28" rx="10" fill="#fb923c"/>
+  <rect x="184" y="296" width="168" height="28" rx="10" fill="#fdba74"/>
+  <rect x="184" y="360" width="120" height="28" rx="10" fill="#fed7aa"/>
 </svg>
