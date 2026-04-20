@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { ActionBlock, formatDuePill, dueColor } from "./ActionList";
 import { PageInfo } from "./BlockEditor";
 
@@ -200,6 +201,18 @@ export default function CalendarView({
 
   const [drag, setDrag] = useState<DragState>(null);
   const [editingBusy, setEditingBusy] = useState<string | null>(null); // base id being edited
+
+  // Instant tooltip (portal-rendered so it's never clipped by the scroll container
+  // or hidden behind sibling slots). Shown while the pointer is over a slot.
+  const [tip, setTip] = useState<{ title: string; sub: string; x: number; y: number } | null>(null);
+
+  const showTip = (e: React.PointerEvent | React.MouseEvent, title: string, sub: string) => {
+    setTip({ title, sub, x: e.clientX, y: e.clientY });
+  };
+  const moveTip = (e: React.PointerEvent | React.MouseEvent) => {
+    setTip((prev) => prev ? { ...prev, x: e.clientX, y: e.clientY } : prev);
+  };
+  const hideTip = () => setTip(null);
 
   // Listen for sidebar-initiated drags (window event)
   useEffect(() => {
@@ -508,18 +521,18 @@ export default function CalendarView({
                     const slot = item as Slot & { __kind: "action" };
                     if (drag && drag.mode === "move-action" && drag.slotId === slot.id) return null;
                     if (drag && drag.mode === "resize-action" && drag.slotId === slot.id) {
-                      return renderActionSlot(slot, drag.startMin, drag.endMin, dayIdx, lane, laneCount, actions, handleActionSlotPointerDown, handleActionResizePointerDown, handleActionClick, handleDeleteSlot, onToggleDone, true);
+                      return renderActionSlot(slot, drag.startMin, drag.endMin, dayIdx, lane, laneCount, actions, handleActionSlotPointerDown, handleActionResizePointerDown, handleActionClick, handleDeleteSlot, onToggleDone, true, showTip, moveTip, hideTip);
                     }
                     const s = parseISO(slot.start_at), en = parseISO(slot.end_at);
-                    return renderActionSlot(slot, s.getHours() * 60 + s.getMinutes(), en.getHours() * 60 + en.getMinutes(), dayIdx, lane, laneCount, actions, handleActionSlotPointerDown, handleActionResizePointerDown, handleActionClick, handleDeleteSlot, onToggleDone, false);
+                    return renderActionSlot(slot, s.getHours() * 60 + s.getMinutes(), en.getHours() * 60 + en.getMinutes(), dayIdx, lane, laneCount, actions, handleActionSlotPointerDown, handleActionResizePointerDown, handleActionClick, handleDeleteSlot, onToggleDone, false, showTip, moveTip, hideTip);
                   } else {
                     const bs = item as BusySlot & { __kind: "busy" };
                     if (drag && drag.mode === "move-busy" && drag.baseId === bs.id && drag.origDate === bs.start_at.slice(0, 10)) return null;
                     if (drag && drag.mode === "resize-busy" && drag.baseId === bs.id && drag.origDate === bs.start_at.slice(0, 10)) {
-                      return renderBusySlot(bs, drag.startMin, drag.endMin, dayIdx, lane, laneCount, handleBusySlotPointerDown, handleBusyResizePointerDown, handleBusyClick, true);
+                      return renderBusySlot(bs, drag.startMin, drag.endMin, dayIdx, lane, laneCount, handleBusySlotPointerDown, handleBusyResizePointerDown, handleBusyClick, true, showTip, moveTip, hideTip);
                     }
                     const s = parseISO(bs.start_at), en = parseISO(bs.end_at);
-                    return renderBusySlot(bs, s.getHours() * 60 + s.getMinutes(), en.getHours() * 60 + en.getMinutes(), dayIdx, lane, laneCount, handleBusySlotPointerDown, handleBusyResizePointerDown, handleBusyClick, false);
+                    return renderBusySlot(bs, s.getHours() * 60 + s.getMinutes(), en.getHours() * 60 + en.getMinutes(), dayIdx, lane, laneCount, handleBusySlotPointerDown, handleBusyResizePointerDown, handleBusyClick, false, showTip, moveTip, hideTip);
                   }
                 });
               })()}
@@ -527,13 +540,13 @@ export default function CalendarView({
               {drag && drag.mode === "move-action" && drag.curDay === dayIdx && (() => {
                 const slot = slots.find((s) => s.id === drag.slotId);
                 if (!slot) return null;
-                return renderActionSlot(slot, drag.curStartMin, drag.curEndMin, dayIdx, 0, 1, actions, () => {}, () => {}, () => {}, () => {}, () => {}, true);
+                return renderActionSlot(slot, drag.curStartMin, drag.curEndMin, dayIdx, 0, 1, actions, () => {}, () => {}, () => {}, () => {}, () => {}, true, () => {}, () => {}, () => {});
               })()}
               {/* Moving ghost for busy */}
               {drag && drag.mode === "move-busy" && drag.curDay === dayIdx && (() => {
                 const bs = busySlots.find((b) => b.id === drag.baseId);
                 if (!bs) return null;
-                return renderBusySlot(bs, drag.curStartMin, drag.curEndMin, dayIdx, 0, 1, () => {}, () => {}, () => {}, true);
+                return renderBusySlot(bs, drag.curStartMin, drag.curEndMin, dayIdx, 0, 1, () => {}, () => {}, () => {}, true, () => {}, () => {}, () => {});
               })()}
               {/* New-slot ghost */}
               {drag && (drag.mode === "new-action" || drag.mode === "new-busy") && drag.enteredGrid && drag.ghostDay === dayIdx && (
@@ -566,6 +579,18 @@ export default function CalendarView({
           onDeleted={() => { setEditingBusy(null); onBusyChange(); }}
         />
       )}
+
+      {/* Instant tooltip via portal — shown at cursor, never clipped */}
+      {tip && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed z-[1000] pointer-events-none bg-gray-900 text-white text-[11px] rounded px-2 py-1 shadow-lg min-w-[180px] max-w-[360px]"
+          style={{ left: tip.x + 12, top: tip.y + 12 }}
+        >
+          <div className="font-semibold whitespace-pre-line leading-snug">{tip.title}</div>
+          <div className="text-[10px] text-gray-300 mt-0.5">{tip.sub}</div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
@@ -582,6 +607,9 @@ function renderActionSlot(
   onDeleteSlot: (id: string, e: React.MouseEvent) => void,
   onToggleDone: (action: ActionBlock) => void,
   dragging: boolean,
+  onShowTip: (e: React.MouseEvent, title: string, sub: string) => void,
+  onMoveTip: (e: React.MouseEvent) => void,
+  onHideTip: () => void,
 ) {
   const action = actions.find((a) => a.id === slot.action_block_id);
   // Prefer the live action.content (updated on toggle) over slot.content
@@ -600,8 +628,10 @@ function renderActionSlot(
       style={{ position: "absolute", left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, top, height, zIndex: dragging ? 10 : 1 }}
       className={`rounded shadow-sm border group select-none cursor-grab active:cursor-grabbing ${isDone ? "bg-green-100 border-green-300" : "bg-theme-100 border-theme-300"} ${dragging ? "opacity-80" : "hover:brightness-95"}`}
       onPointerDown={(e) => onSlotPointerDown(e, slot, dayIdx)}
-      onClick={(e) => { if (!dragging) onClickSlot(slot, e); }}
-      title={`${label}\n${content}`}
+      onDoubleClick={(e) => { if (!dragging) onClickSlot(slot, e); }}
+      onMouseEnter={(e) => onShowTip(e, content || "（内容なし）", `${label}（ダブルクリックでページへ）`)}
+      onMouseMove={onMoveTip}
+      onMouseLeave={onHideTip}
     >
       <div className="absolute top-0 left-0 right-0 h-1.5 cursor-ns-resize hover:bg-black/10 rounded-t" onPointerDown={(e) => onResizePointerDown(e, slot, dayIdx, "top")} />
       <div className="absolute bottom-0 left-0 right-0 h-1.5 cursor-ns-resize hover:bg-black/10 rounded-b" onPointerDown={(e) => onResizePointerDown(e, slot, dayIdx, "bottom")} />
@@ -624,6 +654,7 @@ function renderActionSlot(
           title="削除"
         >×</button>
       </div>
+
     </div>
   );
 }
@@ -635,6 +666,9 @@ function renderBusySlot(
   onResizePointerDown: (e: React.PointerEvent, b: BusySlot, di: number, edge: "top" | "bottom") => void,
   onClickSlot: (b: BusySlot, e: React.MouseEvent) => void,
   dragging: boolean,
+  onShowTip: (e: React.MouseEvent, title: string, sub: string) => void,
+  onMoveTip: (e: React.MouseEvent) => void,
+  onHideTip: () => void,
 ) {
   const title = bs.title || "設定不可";
   const top = (startMin / 60) * HOUR_HEIGHT;
@@ -647,10 +681,12 @@ function renderBusySlot(
     <div
       key={`busy-${bs.instance_id}-${dayIdx}`}
       style={{ position: "absolute", left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, top, height, zIndex: dragging ? 10 : 1 }}
-      className={`rounded shadow-sm border select-none cursor-grab active:cursor-grabbing bg-gray-200 border-gray-400 text-gray-700 ${dragging ? "opacity-80" : "hover:brightness-95"}`}
+      className={`rounded shadow-sm border group select-none cursor-grab active:cursor-grabbing bg-gray-200 border-gray-400 text-gray-700 ${dragging ? "opacity-80" : "hover:brightness-95"}`}
       onPointerDown={(e) => onSlotPointerDown(e, bs, dayIdx)}
       onDoubleClick={(e) => { if (!dragging) onClickSlot(bs, e); }}
-      title={`${label}\n${title}${recurLabel}（ダブルクリックで編集）`}
+      onMouseEnter={(e) => onShowTip(e, `${title}${recurLabel}`, `${label}（ダブルクリックで編集）`)}
+      onMouseMove={onMoveTip}
+      onMouseLeave={onHideTip}
     >
       <div className="absolute top-0 left-0 right-0 h-1.5 cursor-ns-resize hover:bg-black/10 rounded-t" onPointerDown={(e) => onResizePointerDown(e, bs, dayIdx, "top")} />
       <div className="absolute bottom-0 left-0 right-0 h-1.5 cursor-ns-resize hover:bg-black/10 rounded-b" onPointerDown={(e) => onResizePointerDown(e, bs, dayIdx, "bottom")} />
@@ -658,6 +694,7 @@ function renderBusySlot(
         <div className="truncate font-medium">{title}{recurLabel}</div>
         {height > 36 && <div className="text-[10px] text-gray-500 truncate">{label}</div>}
       </div>
+
     </div>
   );
 }
