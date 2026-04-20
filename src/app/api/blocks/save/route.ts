@@ -131,6 +131,37 @@ export async function POST(request: NextRequest) {
   const insertBlockTag = db.prepare("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)");
   const insertBlockPage = db.prepare("INSERT OR IGNORE INTO block_pages (block_id, page_id) VALUES (?, ?)");
 
+  /**
+   * The bulk save does DELETE-all + INSERT-all for the scope, which triggers
+   * ON DELETE CASCADE on action_slots (they reference blocks.id). That would
+   * silently wipe the user's calendar assignments whenever they edited any
+   * action block. Save the slots for blocks that will be re-inserted, then
+   * restore them after the new INSERTs run. Slots whose action_block_id no
+   * longer appears in the incoming block list are intentionally NOT restored
+   * (the user deleted that action block, so the slot should follow).
+   */
+  const incomingBlockIds = new Set(blocks.map((b) => b.id).filter((id): id is string => !!id));
+  const preservedSlots: Array<{
+    id: string; user_id: string; action_block_id: string;
+    start_at: string; end_at: string; created_at: string; updated_at: string;
+  }> = incomingBlockIds.size > 0
+    ? (db.prepare(
+        `SELECT id, user_id, action_block_id, start_at, end_at, created_at, updated_at
+           FROM action_slots
+          WHERE user_id = ?
+            AND action_block_id IN (${Array.from(incomingBlockIds).map(() => "?").join(",")})`
+      ).all(user.id, ...Array.from(incomingBlockIds)) as any[])
+    : [];
+  const restoreSlotStmt = db.prepare(
+    `INSERT OR IGNORE INTO action_slots (id, user_id, action_block_id, start_at, end_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  );
+  const restorePreservedSlots = () => {
+    for (const s of preservedSlots) {
+      restoreSlotStmt.run(s.id, s.user_id, s.action_block_id, s.start_at, s.end_at, s.created_at, s.updated_at);
+    }
+  };
+
   if (meetingId) {
     // Meeting content save — blocks belong to a meeting (not a page)
     const saveTransaction = db.transaction(() => {
@@ -165,6 +196,7 @@ export async function POST(request: NextRequest) {
         }
       }
       db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
+      restorePreservedSlots();
     });
     saveTransaction();
     const newVersion = scopeVersion(db, { user_id: user.id, meeting_id: meetingId });
@@ -207,6 +239,7 @@ export async function POST(request: NextRequest) {
       }
       // Clean up orphaned tags (no block references)
       db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
+      restorePreservedSlots();
     });
     saveTransaction();
     const newVersion = scopeVersion(db, { user_id: user.id, page_id: pageId });
@@ -248,6 +281,7 @@ export async function POST(request: NextRequest) {
     }
     // Clean up orphaned tags (no block references)
     db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
+    restorePreservedSlots();
   });
   saveTransaction();
   const newVersion = scopeVersion(db, { user_id: user.id, date: date || "" });
