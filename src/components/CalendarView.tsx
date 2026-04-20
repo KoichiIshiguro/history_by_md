@@ -69,8 +69,43 @@ const DEFAULT_DURATION_MIN = 60;
 
 function pad(n: number): string { return n < 10 ? `0${n}` : String(n); }
 
+function ymdOf(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function isoLocal(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function isInDueRange(slotYmd: string, action: ActionBlock | undefined): boolean {
+  if (!action) return true;
+  const s = action.due_start;
+  const e = action.due_end;
+  if (!s && !e) return true; // no gantt range set, anything goes
+  if (s && slotYmd < s) return false;
+  if (e && slotYmd > e) return false;
+  return true;
+}
+
+function minYmd(a: string | null | undefined, b: string): string {
+  if (!a) return b;
+  return a < b ? a : b;
+}
+function maxYmd(a: string | null | undefined, b: string): string {
+  if (!a) return b;
+  return a > b ? a : b;
+}
+
+function fmtDueRange(s?: string | null, e?: string | null): string {
+  const fmt = (x: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(x);
+    if (!m) return x;
+    return `${+m[2]}月${+m[3]}日`;
+  };
+  if (s && e) return s === e ? fmt(s) : `${fmt(s)} 〜 ${fmt(e)}`;
+  if (s) return `${fmt(s)} 〜`;
+  if (e) return `〜 ${fmt(e)}`;
+  return "（未設定）";
 }
 
 function parseISO(s: string): Date {
@@ -202,6 +237,26 @@ export default function CalendarView({
   const [drag, setDrag] = useState<DragState>(null);
   const [editingBusy, setEditingBusy] = useState<string | null>(null); // base id being edited
 
+  /**
+   * Out-of-range confirmation.
+   *
+   * When the user drops a slot (new or move) on a day outside the action's
+   * Gantt due range, instead of committing the slot immediately we stash
+   * the commit as a closure here and show a modal. On confirm we expand the
+   * action's due_start/due_end to cover the new day, then call `commit()`.
+   */
+  const [pendingOutOfRange, setPendingOutOfRange] = useState<{
+    kind: "new" | "move";
+    actionBlockId: string;
+    actionLabel: string;
+    dueStart: string | null;
+    dueEnd: string | null;
+    newDueStart: string;
+    newDueEnd: string;
+    slotYmd: string;
+    commit: () => Promise<void>;
+  } | null>(null);
+
   // Instant tooltip (portal-rendered so it's never clipped by the scroll container
   // or hidden behind sibling slots). Shown while the pointer is over a slot.
   const [tip, setTip] = useState<{ title: string; sub: string; x: number; y: number } | null>(null);
@@ -284,15 +339,35 @@ export default function CalendarView({
         if (drag.mode === "new-action") {
           if (drag.enteredGrid && drag.ghostEndMin > drag.ghostStartMin) {
             const dayDate = days[drag.ghostDay];
-            await fetch("/api/action-slots", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action_block_id: drag.actionBlockId,
-                start_at: composeISO(dayDate, drag.ghostStartMin),
-                end_at: composeISO(dayDate, drag.ghostEndMin),
-              }),
-            });
-            onSlotChange();
+            const slotYmd = ymdOf(dayDate);
+            const action = actions.find((a) => a.id === drag.actionBlockId);
+            const doCreate = async () => {
+              await fetch("/api/action-slots", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  action_block_id: drag.actionBlockId,
+                  start_at: composeISO(dayDate, drag.ghostStartMin),
+                  end_at: composeISO(dayDate, drag.ghostEndMin),
+                }),
+              });
+              onSlotChange();
+            };
+            if (action && !isInDueRange(slotYmd, action)) {
+              const label = action.content.replace(/^!(action|done)(@\S+)?\s+/i, "").slice(0, 60);
+              setPendingOutOfRange({
+                kind: "new",
+                actionBlockId: drag.actionBlockId,
+                actionLabel: label,
+                dueStart: action.due_start ?? null,
+                dueEnd: action.due_end ?? null,
+                slotYmd,
+                newDueStart: minYmd(action.due_start, slotYmd),
+                newDueEnd: maxYmd(action.due_end, slotYmd),
+                commit: doCreate,
+              });
+            } else {
+              await doCreate();
+            }
           }
         } else if (drag.mode === "new-busy") {
           if (drag.enteredGrid && drag.ghostEndMin > drag.ghostStartMin) {
@@ -310,14 +385,37 @@ export default function CalendarView({
           }
         } else if (drag.mode === "move-action") {
           const dayDate = days[drag.curDay];
-          await fetch(`/api/action-slots/${drag.slotId}`, {
-            method: "PUT", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              start_at: composeISO(dayDate, drag.curStartMin),
-              end_at: composeISO(dayDate, drag.curEndMin),
-            }),
-          });
-          onSlotChange();
+          const slotYmd = ymdOf(dayDate);
+          const slot = slots.find((s) => s.id === drag.slotId);
+          const action = slot ? actions.find((a) => a.id === slot.action_block_id) : undefined;
+          const curStartMin = drag.curStartMin;
+          const curEndMin = drag.curEndMin;
+          const doMove = async () => {
+            await fetch(`/api/action-slots/${drag.slotId}`, {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                start_at: composeISO(dayDate, curStartMin),
+                end_at: composeISO(dayDate, curEndMin),
+              }),
+            });
+            onSlotChange();
+          };
+          if (action && !isInDueRange(slotYmd, action)) {
+            const label = action.content.replace(/^!(action|done)(@\S+)?\s+/i, "").slice(0, 60);
+            setPendingOutOfRange({
+              kind: "move",
+              actionBlockId: action.id,
+              actionLabel: label,
+              dueStart: action.due_start ?? null,
+              dueEnd: action.due_end ?? null,
+              slotYmd,
+              newDueStart: minYmd(action.due_start, slotYmd),
+              newDueEnd: maxYmd(action.due_end, slotYmd),
+              commit: doMove,
+            });
+          } else {
+            await doMove();
+          }
         } else if (drag.mode === "move-busy") {
           // Shifts the base definition. For recurring slots this shifts all future instances.
           const dayDate = days[drag.curDay];
@@ -569,6 +667,60 @@ export default function CalendarView({
           ))}
         </div>
       </div>
+
+      {/* Out-of-range confirmation modal */}
+      {pendingOutOfRange && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPendingOutOfRange(null)}>
+          <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-gray-800 mb-2">期限範囲外への配置</h3>
+            <div className="space-y-2 text-sm text-gray-700">
+              <div>
+                <span className="font-medium">アクション:</span>{" "}
+                <span className="text-gray-600">{pendingOutOfRange.actionLabel || "（内容なし）"}</span>
+              </div>
+              <div>
+                <span className="font-medium">現在の期限:</span>{" "}
+                <span className="text-gray-600">{fmtDueRange(pendingOutOfRange.dueStart, pendingOutOfRange.dueEnd)}</span>
+              </div>
+              <div>
+                <span className="font-medium">配置日:</span>{" "}
+                <span className="text-gray-600">{pendingOutOfRange.slotYmd}</span>
+              </div>
+              <div className="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                このアクションのガント期限範囲の外です。配置を続ける場合、ガントの期限を{" "}
+                <span className="font-semibold">
+                  {fmtDueRange(pendingOutOfRange.newDueStart, pendingOutOfRange.newDueEnd)}
+                </span>
+                {" "}に拡張します。
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-5 pt-3 border-t border-gray-100">
+              <button
+                onClick={() => setPendingOutOfRange(null)}
+                className="rounded px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+              >キャンセル</button>
+              <button
+                onClick={async () => {
+                  const p = pendingOutOfRange;
+                  setPendingOutOfRange(null);
+                  try {
+                    await fetch("/api/actions/resize", {
+                      method: "PUT", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        blockId: p.actionBlockId,
+                        dueStart: p.newDueStart,
+                        dueEnd: p.newDueEnd,
+                      }),
+                    });
+                    await p.commit();
+                  } catch { /* ignore */ }
+                }}
+                className="rounded bg-theme-500 text-white px-4 py-1.5 text-sm font-medium hover:bg-theme-600"
+              >範囲を拡張して配置</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Busy slot edit modal */}
       {editingBusy && (
