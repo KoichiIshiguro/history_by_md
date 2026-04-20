@@ -306,7 +306,15 @@ function BlockEditorInner({
     fetch("/api/templates").then((r) => r.ok ? r.json() : []).then(setTemplates).catch(() => {});
   }, []);
 
+  // Request-ID guard: when the user switches scopes quickly, multiple
+  // fetchBlocks calls can be in flight. If a stale (older) response resolves
+  // AFTER a newer one, it would overwrite the current view with the previous
+  // page's data. We tag each request with an incrementing ID and ignore any
+  // response whose ID is no longer the latest.
+  const fetchReqIdRef = useRef(0);
+
   const fetchBlocks = useCallback(async () => {
+    const myReqId = ++fetchReqIdRef.current;
     setLoading(true);
     let url = "/api/blocks";
     if (viewMode === "meeting" && selectedMeetingId) {
@@ -318,34 +326,40 @@ function BlockEditorInner({
     } else {
       url += `?date=${selectedDate}`;
     }
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      if ((viewMode === "page" || viewMode === "meeting") && data.pageBlocks !== undefined) {
-        setBlocks(data.pageBlocks);
-        setPageRefs(data.pageRefs || []);
-        setDateRefs(data.dateRefs || []);
-        setLastVersion(data.version ?? null);
-      } else if (viewMode === "tag") {
-        setBlocks(data);
-        setPageRefs([]);
-        setDateRefs([]);
-        setLastVersion(null); // tag view has no single version
-      } else {
-        // Date view: server now returns { pageBlocks, version }
-        if (Array.isArray(data)) {
-          // Defensive: legacy array shape
+    try {
+      const res = await fetch(url);
+      if (myReqId !== fetchReqIdRef.current) return; // a newer request superseded us
+      if (res.ok) {
+        const data = await res.json();
+        if (myReqId !== fetchReqIdRef.current) return; // re-check after JSON parse
+        if ((viewMode === "page" || viewMode === "meeting") && data.pageBlocks !== undefined) {
+          setBlocks(data.pageBlocks);
+          setPageRefs(data.pageRefs || []);
+          setDateRefs(data.dateRefs || []);
+          setLastVersion(data.version ?? null);
+        } else if (viewMode === "tag") {
           setBlocks(data);
+          setPageRefs([]);
+          setDateRefs([]);
           setLastVersion(null);
         } else {
-          setBlocks(data.pageBlocks || []);
-          setLastVersion(data.version ?? null);
+          if (Array.isArray(data)) {
+            setBlocks(data);
+            setLastVersion(null);
+          } else {
+            setBlocks(data.pageBlocks || []);
+            setLastVersion(data.version ?? null);
+          }
+          setPageRefs([]);
+          setDateRefs([]);
         }
-        setPageRefs([]);
-        setDateRefs([]);
       }
+    } finally {
+      // Only the LATEST request is allowed to clear the loading flag,
+      // otherwise a stale "done" would briefly hide the spinner while the
+      // newer request is still in flight.
+      if (myReqId === fetchReqIdRef.current) setLoading(false);
     }
-    setLoading(false);
   }, [viewMode, selectedDate, selectedPageId, selectedTagId, selectedMeetingId]);
 
   useEffect(() => { fetchBlocks(); }, [fetchBlocks]); // eslint-disable-line react-hooks/exhaustive-deps
