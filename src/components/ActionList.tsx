@@ -196,7 +196,10 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ blockId: action.id, content: newContent }),
     });
+    // Refresh actions + slots; slots carry baked-in content via a JOIN
+    // so they need a re-fetch to reflect the new !action ↔ !done state.
     fetchActions();
+    fetchSlots();
     if (onActionChange) onActionChange();
   };
 

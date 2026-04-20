@@ -560,8 +560,11 @@ function renderActionSlot(
   dragging: boolean,
 ) {
   const action = actions.find((a) => a.id === slot.action_block_id);
-  const content = (slot.content ?? action?.content ?? "").replace(/^!(action|done)(@\S+)?\s+/i, "");
-  const isDone = /^!done/i.test(slot.content ?? action?.content ?? "");
+  // Prefer the live action.content (updated on toggle) over slot.content
+  // which was baked in at slot-fetch time and can be stale.
+  const liveContent = action?.content ?? slot.content ?? "";
+  const content = liveContent.replace(/^!(action|done)(@\S+)?\s+/i, "");
+  const isDone = /^!done/i.test(liveContent);
   const top = (startMin / 60) * HOUR_HEIGHT;
   const height = Math.max(18, ((endMin - startMin) / 60) * HOUR_HEIGHT);
   const label = `${Math.floor(startMin / 60)}:${pad(startMin % 60)} - ${Math.floor(endMin / 60)}:${pad(endMin % 60)}`;
