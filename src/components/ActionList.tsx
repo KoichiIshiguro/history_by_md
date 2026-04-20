@@ -266,7 +266,14 @@ export default function ActionList({ pageId, allPages, allTags, onPageClick, onT
       ) : tab === "schedule" && !compact ? (
         <>
           <CalendarView
-            slots={slots}
+            slots={(() => {
+              // When "完了済みも表示" is OFF, hide slots whose underlying action is !done.
+              // (The `actions` array already excludes done items in that mode, so any
+              // slot whose action_block_id isn't in it corresponds to a completed action.)
+              if (showCompleted) return slots;
+              const liveIds = new Set(actions.map((a) => a.id));
+              return slots.filter((s) => liveIds.has(s.action_block_id));
+            })()}
             busySlots={busySlots}
             actions={actions}
             weekStart={weekStart}
