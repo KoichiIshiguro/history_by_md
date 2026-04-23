@@ -591,7 +591,43 @@ function BlockEditorInner({
     if (e.key === "Escape") { clearSelection(); return; }
   }, [editingBlockId, selectedBlockIds, blocks, deleteSelectedBlocks, copySelectedBlocks, indentSelectedBlocks, clearSelection, undo, redo, pushUndo, viewMode, selectedDate, debouncedSave]);
 
+  const toggleBlockSelected = useCallback((blockIndex: number) => {
+    const b = blocks[blockIndex];
+    if (!b) return;
+    const next = new Set(selectedBlockIds);
+    if (next.has(b.id)) next.delete(b.id);
+    else next.add(b.id);
+    setSelectedBlockIds(next);
+    setSelectionAnchor(blockIndex);
+  }, [blocks, selectedBlockIds]);
+
+  const selectJustBlock = useCallback((blockIndex: number) => {
+    const b = blocks[blockIndex];
+    if (!b) return;
+    if (editingBlockId) {
+      const updated = blocks.map((x) => x.id === editingBlockId ? { ...x, content: editContent } : x);
+      setBlocks(updated); debouncedSave(updated);
+      setEditingBlockId(null); setShowSuggestions(false);
+    }
+    setSelectedBlockIds(new Set([b.id]));
+    setSelectionAnchor(blockIndex);
+    setTimeout(() => containerRef.current?.focus(), 0);
+  }, [blocks, editingBlockId, editContent, debouncedSave]);
+
   const handleBlockMouseDown = useCallback((e: React.MouseEvent, blockIndex: number) => {
+    // Cmd/Ctrl+Click: toggle this block in/out of the selection set
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+      e.preventDefault();
+      skipMouseUpRef.current = true;
+      if (editingBlockId) {
+        const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+        setBlocks(updated); debouncedSave(updated);
+        setEditingBlockId(null); setShowSuggestions(false);
+      }
+      toggleBlockSelected(blockIndex);
+      setTimeout(() => containerRef.current?.focus(), 0);
+      return;
+    }
     if (e.shiftKey && selectionAnchor !== null) {
       e.preventDefault();
       skipMouseUpRef.current = true;
@@ -1148,6 +1184,18 @@ function BlockEditorInner({
   const handleRefBlockMouseDown = useCallback((e: React.MouseEvent, _blockIndex: number, block: Block) => {
     const { list: refList } = getRefContext(block);
     const refIndex = refList.findIndex((b) => b.id === block.id);
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+      // Cmd/Ctrl+Click: toggle this block's selection
+      e.preventDefault();
+      skipMouseUpRef.current = true;
+      const next = new Set(selectedBlockIds);
+      if (next.has(block.id)) next.delete(block.id);
+      else next.add(block.id);
+      setSelectedBlockIds(next);
+      setSelectionAnchor(refIndex);
+      setTimeout(() => containerRef.current?.focus(), 0);
+      return;
+    }
     if (e.shiftKey && selectionAnchor !== null) {
       e.preventDefault();
       skipMouseUpRef.current = true;
@@ -1225,6 +1273,36 @@ function BlockEditorInner({
     onPaste: isRef ? handleRefPaste : handlePaste,
     onPageClick, onTagClick, onDateClick, onMeetingClick, onApplySuggestion: applySuggestion,
     onBlockMouseDown: isRef ? ((e: React.MouseEvent, blockIndex: number) => handleRefBlockMouseDown(e, blockIndex, block)) : handleBlockMouseDown,
+    onBulletMouseDown: isRef ? undefined : (e: React.MouseEvent, blockIndex: number) => {
+      // Cmd/Ctrl → toggle; Shift → extend range; plain click → select just this.
+      if (e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        skipMouseUpRef.current = true;
+        if (editingBlockId) {
+          const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+          setBlocks(updated); debouncedSave(updated);
+          setEditingBlockId(null); setShowSuggestions(false);
+        }
+        toggleBlockSelected(blockIndex);
+        setTimeout(() => containerRef.current?.focus(), 0);
+        return;
+      }
+      if (e.shiftKey && selectionAnchor !== null) {
+        e.preventDefault();
+        skipMouseUpRef.current = true;
+        if (editingBlockId) {
+          const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+          setBlocks(updated); debouncedSave(updated);
+          setEditingBlockId(null); setShowSuggestions(false);
+        }
+        selectRange(selectionAnchor, blockIndex);
+        setTimeout(() => containerRef.current?.focus(), 0);
+        return;
+      }
+      e.preventDefault();
+      skipMouseUpRef.current = true;
+      selectJustBlock(blockIndex);
+    },
     skipMouseUpRef,
     onIndent: isRef ? (b: Block) => {
       const updated = { ...b, indent_level: b.indent_level + 1, content: editContent };
@@ -1269,6 +1347,46 @@ function BlockEditorInner({
     <div ref={containerRef} className="mx-auto max-w-3xl outline-none" tabIndex={-1}
       onKeyDown={(e) => { if (e.key === "Shift") shiftHeldRef.current = true; handleContainerKeyDown(e); }}
       onKeyUp={(e) => { if (e.key === "Shift") shiftHeldRef.current = false; }}>
+      {/* Selection toolbar — floats at top when ≥1 block is selected */}
+      {selectedBlockIds.size > 0 && (
+        <div className="sticky top-0 z-30 mb-2 flex flex-wrap items-center gap-1.5 rounded-md border border-theme-300 bg-theme-50 px-3 py-1.5 shadow-sm text-xs">
+          <span className="font-semibold text-theme-700">{selectedBlockIds.size}件選択中</span>
+          <span className="text-gray-400">|</span>
+          <button
+            onClick={() => copySelectedBlocks(false)}
+            className="rounded border border-gray-300 bg-white px-2 py-0.5 text-gray-700 hover:bg-gray-100"
+            title="⌘C"
+          >コピー</button>
+          <button
+            onClick={() => copySelectedBlocks(true)}
+            className="rounded border border-gray-300 bg-white px-2 py-0.5 text-gray-700 hover:bg-gray-100"
+            title="⌘X"
+          >カット</button>
+          <button
+            onClick={() => indentSelectedBlocks(true)}
+            className="rounded border border-gray-300 bg-white px-2 py-0.5 text-gray-700 hover:bg-gray-100"
+            title="Shift+Tab"
+          >⇐ アウトデント</button>
+          <button
+            onClick={() => indentSelectedBlocks(false)}
+            className="rounded border border-gray-300 bg-white px-2 py-0.5 text-gray-700 hover:bg-gray-100"
+            title="Tab"
+          >インデント ⇒</button>
+          <button
+            onClick={deleteSelectedBlocks}
+            className="rounded border border-red-300 bg-white px-2 py-0.5 text-red-600 hover:bg-red-50"
+            title="Delete"
+          >削除</button>
+          <span className="ml-auto text-gray-500 hidden sm:inline">
+            Shift/⌘+クリック・⌘A で選択、Esc で解除
+          </span>
+          <button
+            onClick={clearSelection}
+            className="rounded px-1.5 py-0.5 text-gray-500 hover:bg-gray-100"
+            title="Esc"
+          >✕</button>
+        </div>
+      )}
       {conflict && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
@@ -1642,6 +1760,7 @@ interface BlockLineProps {
   onMeetingClick?: (meetingId: string) => void;
   onApplySuggestion: (name: string) => void;
   onBlockMouseDown: (e: React.MouseEvent, blockIndex: number) => void;
+  onBulletMouseDown?: (e: React.MouseEvent, blockIndex: number) => void;
   skipMouseUpRef: React.MutableRefObject<boolean>;
   onIndent?: (block: Block) => void;
   onOutdent?: (block: Block) => void;
@@ -1650,13 +1769,13 @@ interface BlockLineProps {
 const BlockLine = React.memo(function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, showSuggestions,
   suggestions, selectedSuggestion, allPages, allTags, allMeetings, setInputRef, onStartEditing,
   onEditContentChange, onFinishEditing, onKeyDown, onPaste, onPageClick, onTagClick, onDateClick, onMeetingClick,
-  onApplySuggestion, onBlockMouseDown, skipMouseUpRef, onIndent, onOutdent,
+  onApplySuggestion, onBlockMouseDown, onBulletMouseDown, skipMouseUpRef, onIndent, onOutdent,
 }: BlockLineProps) {
   const indent = block.indent_level * 24;
 
   return (
     <div className={`group relative flex items-stretch min-h-[2em] ${isSelected ? "bg-blue-100 rounded" : ""} ${!isEditing ? "cursor-text hover:bg-gray-50 rounded" : ""}`}
-      style={{ paddingLeft: `${indent}px` }}
+      style={{ paddingLeft: `${indent + 14}px` }}
       onMouseDown={(e) => {
         // Don't trigger selection/re-render when clicking on links — it replaces DOM nodes
         // and prevents the click event from firing
@@ -1694,6 +1813,20 @@ const BlockLine = React.memo(function BlockLine({ block, blockIndex, isEditing, 
         if (target.closest('.gfm-link')) return;
         onStartEditing(block);
       }}>
+      {/* Bullet handle — click to select just this block (Cmd/Shift to extend). */}
+      {onBulletMouseDown && (
+        <span
+          onMouseDown={(e) => { e.stopPropagation(); onBulletMouseDown(e, blockIndex); }}
+          onClick={(e) => e.stopPropagation()}
+          className={`absolute cursor-pointer select-none flex items-center justify-center ${
+            isSelected ? "opacity-100" : "opacity-40 group-hover:opacity-100"
+          }`}
+          style={{ left: indent, top: 0, bottom: 0, width: 14 }}
+          title="クリックで選択 / ⌘+クリックで追加選択 / Shift+クリックで範囲選択"
+        >
+          <span className={`block h-1.5 w-1.5 rounded-full transition ${isSelected ? "bg-theme-600" : "bg-gray-400"}`} />
+        </span>
+      )}
       {isEditing && /^!ai\s/i.test(editContent) ? (
         <div className="relative flex-1">
           <div className="flex items-center gap-2 rounded-lg border border-purple-300 bg-purple-50 px-3 py-1.5">
