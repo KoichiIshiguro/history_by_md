@@ -11,6 +11,7 @@ import {
   DragStartEvent, DragEndEvent,
 } from "@dnd-kit/core";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { normalizeActionDate, todayISO } from "@/lib/actionDate";
 
 // Load mermaid dynamically from CDN to avoid 291MB npm dependency
 let mermaidLoaded = false;
@@ -717,20 +718,30 @@ function BlockEditorInner({
       setEditingBlockId(null); setShowSuggestions(false);
       return;
     }
+    // Normalize any !action / !done date spec eagerly so the user sees
+    // "@2026/04/03-2026/04/03" immediately after blur/Enter (not just in
+    // the DB). Year-locking is safer the earlier it happens.
+    const defaultDate =
+      viewMode === "date" ? (selectedDate || todayISO()) : todayISO();
+    const normalizedContent = normalizeActionDate(currentContent, defaultDate);
+    if (normalizedContent !== currentContent) {
+      setEditContent(normalizedContent);
+    }
+
     const refBlock = [...currentPageRefs, ...currentDateRefs].find((b) => b.id === currentEditingId);
     if (refBlock) {
-      const updated = { ...refBlock, content: currentContent };
+      const updated = { ...refBlock, content: normalizedContent };
       setPageRefs(currentPageRefs.map((b) => b.id === currentEditingId ? updated : b));
       setDateRefs(currentDateRefs.map((b) => b.id === currentEditingId ? updated : b));
       setEditingBlockId(null); setShowSuggestions(false);
       debouncedRefSave(updated); return;
     }
     // Create new object only for edited block — React.memo skips unchanged blocks
-    const updated = currentBlocks.map((b) => b.id === currentEditingId ? { ...b, content: currentContent } : b);
+    const updated = currentBlocks.map((b) => b.id === currentEditingId ? { ...b, content: normalizedContent } : b);
     setBlocks(updated);
     debouncedSave(updated);
     setEditingBlockId(null); setShowSuggestions(false);
-  }, [aiGenerating, aiResult, debouncedSave, debouncedRefSave]);
+  }, [aiGenerating, aiResult, debouncedSave, debouncedRefSave, viewMode, selectedDate]);
 
   const handleContentChange = (value: string) => {
     // Strip newlines unless Shift is held (Shift+Enter = intentional newline)
@@ -960,7 +971,11 @@ function BlockEditorInner({
       pushUndo();
       const before = editContent.slice(0, cursorPos);
       const after = editContent.slice(cursorPos);
-      const updated = blocks.map((b) => b.id === block.id ? { ...b, content: before } : b);
+      // Normalize !action/!done date spec on the block that's being "closed"
+      // by this Enter. Makes "@4/3" become "@2026/04/03-2026/04/03" immediately.
+      const defaultDate = viewMode === "date" ? (selectedDate || todayISO()) : todayISO();
+      const beforeNorm = normalizeActionDate(before, defaultDate);
+      const updated = blocks.map((b) => b.id === block.id ? { ...b, content: beforeNorm } : b);
       const newBlock: Block = { id: crypto.randomUUID(), content: after, indent_level: block.indent_level, sort_order: block.sort_order + 1, date: block.date };
       updated.splice(blockIndex + 1, 0, newBlock);
       const reordered = updated.map((b, i) => ({ ...b, sort_order: i }));
@@ -1071,7 +1086,9 @@ function BlockEditorInner({
       e.preventDefault();
       const before = editContent.slice(0, cursorPos);
       const after = editContent.slice(cursorPos);
-      const updatedBlock = { ...block, content: before };
+      const defaultDate = viewMode === "date" ? (selectedDate || todayISO()) : todayISO();
+      const beforeNorm = normalizeActionDate(before, defaultDate);
+      const updatedBlock = { ...block, content: beforeNorm };
       const newBlock: Block = {
         id: crypto.randomUUID(), content: after, indent_level: block.indent_level,
         sort_order: block.sort_order + 1, date: block.date, page_id: block.page_id,
