@@ -62,8 +62,9 @@ interface Props {
 
 const HOUR_HEIGHT = 60;
 const MIN_STEP = 15;
-const DAY_COUNT = 7;
+const DEFAULT_DAY_COUNT = 7;
 const DEFAULT_DURATION_MIN = 60;
+type DayCount = 1 | 3 | 7;
 
 // ─── Utilities ──────────────────────────────────────────
 
@@ -182,29 +183,31 @@ export default function CalendarView({
   slots, busySlots, actions, weekStart, setWeekStart,
   onSlotChange, onBusyChange, onToggleDone, onOpenAction,
 }: Props) {
-  const days = useMemo(() => Array.from({ length: DAY_COUNT }, (_, i) => addDays(weekStart, i)), [weekStart]);
+  const [dayCount, setDayCount] = useState<DayCount>(DEFAULT_DAY_COUNT);
+
+  const days = useMemo(() => Array.from({ length: dayCount }, (_, i) => addDays(weekStart, i)), [weekStart, dayCount]);
 
   const slotsByDay = useMemo(() => {
-    const arr: Slot[][] = [[], [], [], [], [], [], []];
+    const arr: Slot[][] = Array.from({ length: dayCount }, () => []);
     for (const s of slots) {
       const d = parseISO(s.start_at);
-      for (let i = 0; i < DAY_COUNT; i++) {
+      for (let i = 0; i < dayCount; i++) {
         if (d >= days[i] && d < addDays(days[i], 1)) { arr[i].push(s); break; }
       }
     }
     return arr;
-  }, [slots, days]);
+  }, [slots, days, dayCount]);
 
   const busyByDay = useMemo(() => {
-    const arr: BusySlot[][] = [[], [], [], [], [], [], []];
+    const arr: BusySlot[][] = Array.from({ length: dayCount }, () => []);
     for (const b of busySlots) {
       const d = parseISO(b.start_at);
-      for (let i = 0; i < DAY_COUNT; i++) {
+      for (let i = 0; i < dayCount; i++) {
         if (d >= days[i] && d < addDays(days[i], 1)) { arr[i].push(b); break; }
       }
     }
     return arr;
-  }, [busySlots, days]);
+  }, [busySlots, days, dayCount]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -287,8 +290,8 @@ export default function CalendarView({
     const inside = rawX >= 0 && rawX < rect.width && rawY >= 0 && rawY < rect.height;
     const x = Math.max(0, Math.min(rect.width - 1, rawX));
     const y = Math.max(0, Math.min(rect.height - 1, rawY)) + grid.scrollTop;
-    const colW = rect.width / DAY_COUNT;
-    const day = Math.max(0, Math.min(DAY_COUNT - 1, Math.floor(x / colW)));
+    const colW = rect.width / dayCount;
+    const day = Math.max(0, Math.min(dayCount - 1, Math.floor(x / colW)));
     const minutes = minutesFromTop((y / HOUR_HEIGHT) * 60);
     return { day, minutes, inside };
   };
@@ -548,13 +551,42 @@ export default function CalendarView({
     <div className="rounded-lg border border-gray-200 bg-white overflow-hidden flex flex-col h-[calc(100vh-180px)]">
       {/* Header: nav */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 flex-shrink-0">
-        <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">←</button>
-        <button onClick={() => setWeekStart(sundayOf(new Date()))} className="rounded px-2 py-1 text-sm text-theme-600 hover:bg-theme-50 font-medium">今週</button>
-        <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">→</button>
+        <button onClick={() => setWeekStart(addDays(weekStart, -dayCount))} className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">←</button>
+        <button
+          onClick={() => setWeekStart(dayCount === 7 ? sundayOf(new Date()) : startOfDay(new Date()))}
+          className="rounded px-2 py-1 text-sm text-theme-600 hover:bg-theme-50 font-medium"
+        >{dayCount === 7 ? "今週" : "今日"}</button>
+        <button onClick={() => setWeekStart(addDays(weekStart, dayCount))} className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">→</button>
         <span className="ml-3 text-sm font-medium text-gray-700">{fmtMonth(weekStart)}</span>
-        <span className="ml-auto text-xs text-gray-500">
-          {weekStart.getMonth() + 1}/{weekStart.getDate()} 〜 {addDays(weekStart, 6).getMonth() + 1}/{addDays(weekStart, 6).getDate()}
+        <span className="ml-3 text-xs text-gray-500">
+          {weekStart.getMonth() + 1}/{weekStart.getDate()}
+          {dayCount > 1 && <> 〜 {addDays(weekStart, dayCount - 1).getMonth() + 1}/{addDays(weekStart, dayCount - 1).getDate()}</>}
         </span>
+        {/* View toggle: 1-day / 3-day / 7-day */}
+        <div className="ml-auto inline-flex rounded border border-gray-300 overflow-hidden text-xs">
+          {([1, 3, 7] as const).map((n) => (
+            <button
+              key={n}
+              onClick={() => {
+                // Switch view. When expanding to 7-day, snap view start to Sunday;
+                // when narrowing to 1 or 3 days, keep current start but clamp to
+                // today if the current start is before today (avoid showing past).
+                if (n === 7) {
+                  setWeekStart(sundayOf(weekStart));
+                } else if (dayCount === 7) {
+                  // From week view → focus on today for usability
+                  setWeekStart(startOfDay(new Date()));
+                }
+                setDayCount(n);
+              }}
+              className={`px-2.5 py-1 transition ${
+                dayCount === n
+                  ? "bg-theme-500 text-white"
+                  : "bg-white text-gray-600 hover:bg-gray-50"
+              } ${n !== 1 ? "border-l border-gray-300" : ""}`}
+            >{n}日</button>
+          ))}
+        </div>
       </div>
 
       {/* Day headers */}
