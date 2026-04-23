@@ -46,6 +46,35 @@ interface Block {
   source_page_id?: string;
 }
 
+/**
+ * Parse leading indentation from a pasted line.
+ *
+ * Rules:
+ *   - 1 tab         = 1 indent level
+ *   - 4 spaces      = 1 indent level
+ *   - Mixed is OK; leading whitespace is counted left-to-right, the
+ *     remainder (<4 trailing spaces) is discarded so "pretty-printed"
+ *     markdown/code pastes round down cleanly.
+ *
+ * Returns { indent, content } where content has the leading whitespace stripped.
+ */
+function parseLeadingIndent(line: string): { indent: number; content: string } {
+  const m = line.match(/^([\t ]*)/);
+  const ws = m?.[1] || "";
+  let indent = 0;
+  let spaceRun = 0;
+  for (const ch of ws) {
+    if (ch === "\t") {
+      indent += 1 + Math.floor(spaceRun / 4);
+      spaceRun = 0;
+    } else {
+      spaceRun += 1;
+    }
+  }
+  indent += Math.floor(spaceRun / 4);
+  return { indent, content: line.slice(ws.length) };
+}
+
 export interface PageInfo { id: string; name: string; parent_id?: string | null; ref_count?: number; full_path?: string; }
 export interface TagInfo { id: string; name: string; block_count?: number; }
 export interface Template { id: string; name: string; content: string; }
@@ -502,6 +531,18 @@ function BlockEditorInner({
     setBlocks(reordered); clearSelection(); debouncedSave(reordered);
   }, [blocks, selectedBlockIds, selectedDate, viewMode, clearSelection, debouncedSave, pushUndo]);
 
+  const indentSelectedBlocks = useCallback((outdent: boolean) => {
+    if (selectedBlockIds.size === 0) return;
+    pushUndo();
+    const updated = blocks.map((b) =>
+      selectedBlockIds.has(b.id)
+        ? { ...b, indent_level: outdent ? Math.max(0, b.indent_level - 1) : b.indent_level + 1 }
+        : b
+    );
+    setBlocks(updated);
+    debouncedSave(updated);
+  }, [blocks, selectedBlockIds, pushUndo, debouncedSave]);
+
   const copySelectedBlocks = useCallback(async (cut: boolean) => {
     if (selectedBlockIds.size === 0) return;
     const texts = blocks.filter((b) => selectedBlockIds.has(b.id)).map((b) => "  ".repeat(b.indent_level) + b.content);
@@ -517,6 +558,7 @@ function BlockEditorInner({
     if (editingBlockId) return;
     if (selectedBlockIds.size === 0) return;
     if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); deleteSelectedBlocks(); return; }
+    if (e.key === "Tab") { e.preventDefault(); indentSelectedBlocks(e.shiftKey); return; }
     if (meta && e.key === "c") { e.preventDefault(); copySelectedBlocks(false); return; }
     if (meta && e.key === "x") { e.preventDefault(); copySelectedBlocks(true); return; }
     if (meta && e.key === "v") {
@@ -530,9 +572,9 @@ function BlockEditorInner({
         const remaining = blocks.filter((b) => !selectedBlockIds.has(b.id));
         const insertAt = firstSelectedIdx >= 0 ? firstSelectedIdx : remaining.length;
         const baseDate = viewMode === "page" ? "" : selectedDate;
-        const newBlocks: Block[] = lines.map((line, i) => {
-          const spaces = line.match(/^( *)/)?.[1]?.length || 0;
-          return { id: crypto.randomUUID(), content: line.trimStart(), indent_level: Math.floor(spaces / 2), sort_order: 0, date: baseDate };
+        const newBlocks: Block[] = lines.map((line) => {
+          const { indent, content } = parseLeadingIndent(line);
+          return { id: crypto.randomUUID(), content, indent_level: indent, sort_order: 0, date: baseDate };
         });
         remaining.splice(insertAt, 0, ...newBlocks);
         const reordered = remaining.map((b, i) => ({ ...b, sort_order: i }));
@@ -547,7 +589,7 @@ function BlockEditorInner({
     }
     if (meta && e.key === "a") { e.preventDefault(); setSelectedBlockIds(new Set(blocks.map((b) => b.id))); setSelectionAnchor(0); return; }
     if (e.key === "Escape") { clearSelection(); return; }
-  }, [editingBlockId, selectedBlockIds, blocks, deleteSelectedBlocks, copySelectedBlocks, clearSelection, undo, redo, pushUndo, viewMode, selectedDate, debouncedSave]);
+  }, [editingBlockId, selectedBlockIds, blocks, deleteSelectedBlocks, copySelectedBlocks, indentSelectedBlocks, clearSelection, undo, redo, pushUndo, viewMode, selectedDate, debouncedSave]);
 
   const handleBlockMouseDown = useCallback((e: React.MouseEvent, blockIndex: number) => {
     if (e.shiftKey && selectionAnchor !== null) {
@@ -716,20 +758,18 @@ function BlockEditorInner({
       if (blockIndex === -1) { setShowSuggestions(false); return; }
       const block = blocks[blockIndex];
       // First line replaces current block content
-      const firstLine = lines[0];
-      const leadingSpaces = firstLine.match(/^( *)/)?.[1]?.length || 0;
-      const firstContent = firstLine.trimStart();
-      const firstIndent = block.indent_level + Math.floor(leadingSpaces / 2);
+      const first = parseLeadingIndent(lines[0]);
+      const firstContent = first.content;
+      const firstIndent = block.indent_level + first.indent;
       const updated = blocks.map((b) => b.id === block.id ? { ...b, content: firstContent, indent_level: firstIndent } : b);
       // Remaining lines become new blocks
       const newBlocks: Block[] = [];
       for (let i = 1; i < lines.length; i++) {
-        const line = lines[i];
-        const spaces = line.match(/^( *)/)?.[1]?.length || 0;
+        const parsed = parseLeadingIndent(lines[i]);
         newBlocks.push({
           id: crypto.randomUUID(),
-          content: line.trimStart(),
-          indent_level: block.indent_level + Math.floor(spaces / 2),
+          content: parsed.content,
+          indent_level: block.indent_level + parsed.indent,
           sort_order: 0,
           date: block.date,
         });
@@ -780,14 +820,18 @@ function BlockEditorInner({
     // Update current block with first line
     const updated = blocks.map((b) => b.id === block.id ? { ...b, content: firstContent } : b);
 
-    // Create new blocks for middle + last lines
+    // Create new blocks for middle + last lines. Middle lines respect
+    // their leading-indent (4-spaces or tab-per-level); the last line
+    // inherits its own leading-indent too, with trailing `after` appended.
     const newBlocks: Block[] = [];
     for (let i = 1; i < lines.length; i++) {
-      const content = i === lines.length - 1 ? lastLineContent : lines[i];
+      const isLast = i === lines.length - 1;
+      const { indent, content: stripped } = parseLeadingIndent(lines[i]);
+      const content = isLast ? stripped + after : stripped;
       newBlocks.push({
         id: crypto.randomUUID(),
         content,
-        indent_level: block.indent_level,
+        indent_level: block.indent_level + indent,
         sort_order: 0,
         date: block.date,
       });
@@ -798,7 +842,8 @@ function BlockEditorInner({
 
     // Focus last new block at end of pasted content (before the "after" text)
     const lastBlock = newBlocks[newBlocks.length - 1];
-    const cursorAt = (lines[lines.length - 1]).length;
+    const { content: lastStripped } = parseLeadingIndent(lines[lines.length - 1]);
+    const cursorAt = lastStripped.length;
     setEditingBlockId(lastBlock.id);
     setEditContent(lastBlock.content);
     setTimeout(() => { const el = inputRefs.current.get(lastBlock.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = cursorAt; } }, 0);
@@ -1068,12 +1113,14 @@ function BlockEditorInner({
     const updated = [...refList];
     updated[blockIndex] = updatedCurrent;
 
-    // Create new blocks for middle + last lines
+    // Create new blocks for middle + last lines. Respect 4-space/tab indent.
     const newBlocks: Block[] = [];
     for (let i = 1; i < lines.length; i++) {
-      const content = i === lines.length - 1 ? lastLineContent : lines[i];
+      const isLast = i === lines.length - 1;
+      const { indent, content: stripped } = parseLeadingIndent(lines[i]);
+      const content = isLast ? stripped + after : stripped;
       newBlocks.push({
-        id: crypto.randomUUID(), content, indent_level: block.indent_level,
+        id: crypto.randomUUID(), content, indent_level: block.indent_level + indent,
         sort_order: 0, date: block.date, page_id: block.page_id,
         source_page_name: block.source_page_name, source_page_id: block.source_page_id,
       });
