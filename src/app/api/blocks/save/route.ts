@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
-import { parseAction, todayISO } from "@/lib/actionDate";
+import { parseAction, todayISO, normalizeActionDate } from "@/lib/actionDate";
 import { scopeVersion } from "@/lib/blockVersion";
 import { NextRequest } from "next/server";
 
@@ -122,6 +122,15 @@ export async function POST(request: NextRequest) {
         currentVersion,
       }, { status: 409 });
     }
+  }
+
+  // Normalize action date specs in content upfront so storage always holds
+  // the full `@YYYY/MM/DD-YYYY/MM/DD` form. This freezes the year against
+  // calendar-rollover drift: a "!action@4/3" typed in 2026 saved a year
+  // later still means 2026/04/03, not 2027/04/03.
+  const scopeDefaultDate = meetingId || pageId ? todayISO() : (date || todayISO());
+  for (const b of blocks) {
+    b.content = normalizeActionDate(b.content, scopeDefaultDate);
   }
 
   const { tagResults, pageResults } = computeBlockLinks(blocks);

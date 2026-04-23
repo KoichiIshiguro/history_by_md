@@ -11,6 +11,7 @@ import {
   DragStartEvent, DragEndEvent,
 } from "@dnd-kit/core";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { normalizeActionDate, todayISO } from "@/lib/actionDate";
 
 // Load mermaid dynamically from CDN to avoid 291MB npm dependency
 let mermaidLoaded = false;
@@ -44,6 +45,35 @@ interface Block {
   page_id?: string | null;
   source_page_name?: string;
   source_page_id?: string;
+}
+
+/**
+ * Parse leading indentation from a pasted line.
+ *
+ * Rules:
+ *   - 1 tab         = 1 indent level
+ *   - 4 spaces      = 1 indent level
+ *   - Mixed is OK; leading whitespace is counted left-to-right, the
+ *     remainder (<4 trailing spaces) is discarded so "pretty-printed"
+ *     markdown/code pastes round down cleanly.
+ *
+ * Returns { indent, content } where content has the leading whitespace stripped.
+ */
+function parseLeadingIndent(line: string): { indent: number; content: string } {
+  const m = line.match(/^([\t ]*)/);
+  const ws = m?.[1] || "";
+  let indent = 0;
+  let spaceRun = 0;
+  for (const ch of ws) {
+    if (ch === "\t") {
+      indent += 1 + Math.floor(spaceRun / 4);
+      spaceRun = 0;
+    } else {
+      spaceRun += 1;
+    }
+  }
+  indent += Math.floor(spaceRun / 4);
+  return { indent, content: line.slice(ws.length) };
 }
 
 export interface PageInfo { id: string; name: string; parent_id?: string | null; ref_count?: number; full_path?: string; }
@@ -502,6 +532,18 @@ function BlockEditorInner({
     setBlocks(reordered); clearSelection(); debouncedSave(reordered);
   }, [blocks, selectedBlockIds, selectedDate, viewMode, clearSelection, debouncedSave, pushUndo]);
 
+  const indentSelectedBlocks = useCallback((outdent: boolean) => {
+    if (selectedBlockIds.size === 0) return;
+    pushUndo();
+    const updated = blocks.map((b) =>
+      selectedBlockIds.has(b.id)
+        ? { ...b, indent_level: outdent ? Math.max(0, b.indent_level - 1) : b.indent_level + 1 }
+        : b
+    );
+    setBlocks(updated);
+    debouncedSave(updated);
+  }, [blocks, selectedBlockIds, pushUndo, debouncedSave]);
+
   const copySelectedBlocks = useCallback(async (cut: boolean) => {
     if (selectedBlockIds.size === 0) return;
     const texts = blocks.filter((b) => selectedBlockIds.has(b.id)).map((b) => "  ".repeat(b.indent_level) + b.content);
@@ -517,6 +559,7 @@ function BlockEditorInner({
     if (editingBlockId) return;
     if (selectedBlockIds.size === 0) return;
     if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); deleteSelectedBlocks(); return; }
+    if (e.key === "Tab") { e.preventDefault(); indentSelectedBlocks(e.shiftKey); return; }
     if (meta && e.key === "c") { e.preventDefault(); copySelectedBlocks(false); return; }
     if (meta && e.key === "x") { e.preventDefault(); copySelectedBlocks(true); return; }
     if (meta && e.key === "v") {
@@ -530,9 +573,9 @@ function BlockEditorInner({
         const remaining = blocks.filter((b) => !selectedBlockIds.has(b.id));
         const insertAt = firstSelectedIdx >= 0 ? firstSelectedIdx : remaining.length;
         const baseDate = viewMode === "page" ? "" : selectedDate;
-        const newBlocks: Block[] = lines.map((line, i) => {
-          const spaces = line.match(/^( *)/)?.[1]?.length || 0;
-          return { id: crypto.randomUUID(), content: line.trimStart(), indent_level: Math.floor(spaces / 2), sort_order: 0, date: baseDate };
+        const newBlocks: Block[] = lines.map((line) => {
+          const { indent, content } = parseLeadingIndent(line);
+          return { id: crypto.randomUUID(), content, indent_level: indent, sort_order: 0, date: baseDate };
         });
         remaining.splice(insertAt, 0, ...newBlocks);
         const reordered = remaining.map((b, i) => ({ ...b, sort_order: i }));
@@ -547,9 +590,45 @@ function BlockEditorInner({
     }
     if (meta && e.key === "a") { e.preventDefault(); setSelectedBlockIds(new Set(blocks.map((b) => b.id))); setSelectionAnchor(0); return; }
     if (e.key === "Escape") { clearSelection(); return; }
-  }, [editingBlockId, selectedBlockIds, blocks, deleteSelectedBlocks, copySelectedBlocks, clearSelection, undo, redo, pushUndo, viewMode, selectedDate, debouncedSave]);
+  }, [editingBlockId, selectedBlockIds, blocks, deleteSelectedBlocks, copySelectedBlocks, indentSelectedBlocks, clearSelection, undo, redo, pushUndo, viewMode, selectedDate, debouncedSave]);
+
+  const toggleBlockSelected = useCallback((blockIndex: number) => {
+    const b = blocks[blockIndex];
+    if (!b) return;
+    const next = new Set(selectedBlockIds);
+    if (next.has(b.id)) next.delete(b.id);
+    else next.add(b.id);
+    setSelectedBlockIds(next);
+    setSelectionAnchor(blockIndex);
+  }, [blocks, selectedBlockIds]);
+
+  const selectJustBlock = useCallback((blockIndex: number) => {
+    const b = blocks[blockIndex];
+    if (!b) return;
+    if (editingBlockId) {
+      const updated = blocks.map((x) => x.id === editingBlockId ? { ...x, content: editContent } : x);
+      setBlocks(updated); debouncedSave(updated);
+      setEditingBlockId(null); setShowSuggestions(false);
+    }
+    setSelectedBlockIds(new Set([b.id]));
+    setSelectionAnchor(blockIndex);
+    setTimeout(() => containerRef.current?.focus(), 0);
+  }, [blocks, editingBlockId, editContent, debouncedSave]);
 
   const handleBlockMouseDown = useCallback((e: React.MouseEvent, blockIndex: number) => {
+    // Cmd/Ctrl+Click: toggle this block in/out of the selection set
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+      e.preventDefault();
+      skipMouseUpRef.current = true;
+      if (editingBlockId) {
+        const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+        setBlocks(updated); debouncedSave(updated);
+        setEditingBlockId(null); setShowSuggestions(false);
+      }
+      toggleBlockSelected(blockIndex);
+      setTimeout(() => containerRef.current?.focus(), 0);
+      return;
+    }
     if (e.shiftKey && selectionAnchor !== null) {
       e.preventDefault();
       skipMouseUpRef.current = true;
@@ -639,20 +718,30 @@ function BlockEditorInner({
       setEditingBlockId(null); setShowSuggestions(false);
       return;
     }
+    // Normalize any !action / !done date spec eagerly so the user sees
+    // "@2026/04/03-2026/04/03" immediately after blur/Enter (not just in
+    // the DB). Year-locking is safer the earlier it happens.
+    const defaultDate =
+      viewMode === "date" ? (selectedDate || todayISO()) : todayISO();
+    const normalizedContent = normalizeActionDate(currentContent, defaultDate);
+    if (normalizedContent !== currentContent) {
+      setEditContent(normalizedContent);
+    }
+
     const refBlock = [...currentPageRefs, ...currentDateRefs].find((b) => b.id === currentEditingId);
     if (refBlock) {
-      const updated = { ...refBlock, content: currentContent };
+      const updated = { ...refBlock, content: normalizedContent };
       setPageRefs(currentPageRefs.map((b) => b.id === currentEditingId ? updated : b));
       setDateRefs(currentDateRefs.map((b) => b.id === currentEditingId ? updated : b));
       setEditingBlockId(null); setShowSuggestions(false);
       debouncedRefSave(updated); return;
     }
     // Create new object only for edited block — React.memo skips unchanged blocks
-    const updated = currentBlocks.map((b) => b.id === currentEditingId ? { ...b, content: currentContent } : b);
+    const updated = currentBlocks.map((b) => b.id === currentEditingId ? { ...b, content: normalizedContent } : b);
     setBlocks(updated);
     debouncedSave(updated);
     setEditingBlockId(null); setShowSuggestions(false);
-  }, [aiGenerating, aiResult, debouncedSave, debouncedRefSave]);
+  }, [aiGenerating, aiResult, debouncedSave, debouncedRefSave, viewMode, selectedDate]);
 
   const handleContentChange = (value: string) => {
     // Strip newlines unless Shift is held (Shift+Enter = intentional newline)
@@ -716,20 +805,18 @@ function BlockEditorInner({
       if (blockIndex === -1) { setShowSuggestions(false); return; }
       const block = blocks[blockIndex];
       // First line replaces current block content
-      const firstLine = lines[0];
-      const leadingSpaces = firstLine.match(/^( *)/)?.[1]?.length || 0;
-      const firstContent = firstLine.trimStart();
-      const firstIndent = block.indent_level + Math.floor(leadingSpaces / 2);
+      const first = parseLeadingIndent(lines[0]);
+      const firstContent = first.content;
+      const firstIndent = block.indent_level + first.indent;
       const updated = blocks.map((b) => b.id === block.id ? { ...b, content: firstContent, indent_level: firstIndent } : b);
       // Remaining lines become new blocks
       const newBlocks: Block[] = [];
       for (let i = 1; i < lines.length; i++) {
-        const line = lines[i];
-        const spaces = line.match(/^( *)/)?.[1]?.length || 0;
+        const parsed = parseLeadingIndent(lines[i]);
         newBlocks.push({
           id: crypto.randomUUID(),
-          content: line.trimStart(),
-          indent_level: block.indent_level + Math.floor(spaces / 2),
+          content: parsed.content,
+          indent_level: block.indent_level + parsed.indent,
           sort_order: 0,
           date: block.date,
         });
@@ -780,14 +867,18 @@ function BlockEditorInner({
     // Update current block with first line
     const updated = blocks.map((b) => b.id === block.id ? { ...b, content: firstContent } : b);
 
-    // Create new blocks for middle + last lines
+    // Create new blocks for middle + last lines. Middle lines respect
+    // their leading-indent (4-spaces or tab-per-level); the last line
+    // inherits its own leading-indent too, with trailing `after` appended.
     const newBlocks: Block[] = [];
     for (let i = 1; i < lines.length; i++) {
-      const content = i === lines.length - 1 ? lastLineContent : lines[i];
+      const isLast = i === lines.length - 1;
+      const { indent, content: stripped } = parseLeadingIndent(lines[i]);
+      const content = isLast ? stripped + after : stripped;
       newBlocks.push({
         id: crypto.randomUUID(),
         content,
-        indent_level: block.indent_level,
+        indent_level: block.indent_level + indent,
         sort_order: 0,
         date: block.date,
       });
@@ -798,7 +889,8 @@ function BlockEditorInner({
 
     // Focus last new block at end of pasted content (before the "after" text)
     const lastBlock = newBlocks[newBlocks.length - 1];
-    const cursorAt = (lines[lines.length - 1]).length;
+    const { content: lastStripped } = parseLeadingIndent(lines[lines.length - 1]);
+    const cursorAt = lastStripped.length;
     setEditingBlockId(lastBlock.id);
     setEditContent(lastBlock.content);
     setTimeout(() => { const el = inputRefs.current.get(lastBlock.id); if (el) { el.focus(); el.selectionStart = el.selectionEnd = cursorAt; } }, 0);
@@ -879,7 +971,11 @@ function BlockEditorInner({
       pushUndo();
       const before = editContent.slice(0, cursorPos);
       const after = editContent.slice(cursorPos);
-      const updated = blocks.map((b) => b.id === block.id ? { ...b, content: before } : b);
+      // Normalize !action/!done date spec on the block that's being "closed"
+      // by this Enter. Makes "@4/3" become "@2026/04/03-2026/04/03" immediately.
+      const defaultDate = viewMode === "date" ? (selectedDate || todayISO()) : todayISO();
+      const beforeNorm = normalizeActionDate(before, defaultDate);
+      const updated = blocks.map((b) => b.id === block.id ? { ...b, content: beforeNorm } : b);
       const newBlock: Block = { id: crypto.randomUUID(), content: after, indent_level: block.indent_level, sort_order: block.sort_order + 1, date: block.date };
       updated.splice(blockIndex + 1, 0, newBlock);
       const reordered = updated.map((b, i) => ({ ...b, sort_order: i }));
@@ -990,7 +1086,9 @@ function BlockEditorInner({
       e.preventDefault();
       const before = editContent.slice(0, cursorPos);
       const after = editContent.slice(cursorPos);
-      const updatedBlock = { ...block, content: before };
+      const defaultDate = viewMode === "date" ? (selectedDate || todayISO()) : todayISO();
+      const beforeNorm = normalizeActionDate(before, defaultDate);
+      const updatedBlock = { ...block, content: beforeNorm };
       const newBlock: Block = {
         id: crypto.randomUUID(), content: after, indent_level: block.indent_level,
         sort_order: block.sort_order + 1, date: block.date, page_id: block.page_id,
@@ -1068,12 +1166,14 @@ function BlockEditorInner({
     const updated = [...refList];
     updated[blockIndex] = updatedCurrent;
 
-    // Create new blocks for middle + last lines
+    // Create new blocks for middle + last lines. Respect 4-space/tab indent.
     const newBlocks: Block[] = [];
     for (let i = 1; i < lines.length; i++) {
-      const content = i === lines.length - 1 ? lastLineContent : lines[i];
+      const isLast = i === lines.length - 1;
+      const { indent, content: stripped } = parseLeadingIndent(lines[i]);
+      const content = isLast ? stripped + after : stripped;
       newBlocks.push({
-        id: crypto.randomUUID(), content, indent_level: block.indent_level,
+        id: crypto.randomUUID(), content, indent_level: block.indent_level + indent,
         sort_order: 0, date: block.date, page_id: block.page_id,
         source_page_name: block.source_page_name, source_page_id: block.source_page_id,
       });
@@ -1101,6 +1201,18 @@ function BlockEditorInner({
   const handleRefBlockMouseDown = useCallback((e: React.MouseEvent, _blockIndex: number, block: Block) => {
     const { list: refList } = getRefContext(block);
     const refIndex = refList.findIndex((b) => b.id === block.id);
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+      // Cmd/Ctrl+Click: toggle this block's selection
+      e.preventDefault();
+      skipMouseUpRef.current = true;
+      const next = new Set(selectedBlockIds);
+      if (next.has(block.id)) next.delete(block.id);
+      else next.add(block.id);
+      setSelectedBlockIds(next);
+      setSelectionAnchor(refIndex);
+      setTimeout(() => containerRef.current?.focus(), 0);
+      return;
+    }
     if (e.shiftKey && selectionAnchor !== null) {
       e.preventDefault();
       skipMouseUpRef.current = true;
@@ -1178,6 +1290,36 @@ function BlockEditorInner({
     onPaste: isRef ? handleRefPaste : handlePaste,
     onPageClick, onTagClick, onDateClick, onMeetingClick, onApplySuggestion: applySuggestion,
     onBlockMouseDown: isRef ? ((e: React.MouseEvent, blockIndex: number) => handleRefBlockMouseDown(e, blockIndex, block)) : handleBlockMouseDown,
+    onBulletMouseDown: isRef ? undefined : (e: React.MouseEvent, blockIndex: number) => {
+      // Cmd/Ctrl → toggle; Shift → extend range; plain click → select just this.
+      if (e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        skipMouseUpRef.current = true;
+        if (editingBlockId) {
+          const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+          setBlocks(updated); debouncedSave(updated);
+          setEditingBlockId(null); setShowSuggestions(false);
+        }
+        toggleBlockSelected(blockIndex);
+        setTimeout(() => containerRef.current?.focus(), 0);
+        return;
+      }
+      if (e.shiftKey && selectionAnchor !== null) {
+        e.preventDefault();
+        skipMouseUpRef.current = true;
+        if (editingBlockId) {
+          const updated = blocks.map((b) => b.id === editingBlockId ? { ...b, content: editContent } : b);
+          setBlocks(updated); debouncedSave(updated);
+          setEditingBlockId(null); setShowSuggestions(false);
+        }
+        selectRange(selectionAnchor, blockIndex);
+        setTimeout(() => containerRef.current?.focus(), 0);
+        return;
+      }
+      e.preventDefault();
+      skipMouseUpRef.current = true;
+      selectJustBlock(blockIndex);
+    },
     skipMouseUpRef,
     onIndent: isRef ? (b: Block) => {
       const updated = { ...b, indent_level: b.indent_level + 1, content: editContent };
@@ -1222,6 +1364,46 @@ function BlockEditorInner({
     <div ref={containerRef} className="mx-auto max-w-3xl outline-none" tabIndex={-1}
       onKeyDown={(e) => { if (e.key === "Shift") shiftHeldRef.current = true; handleContainerKeyDown(e); }}
       onKeyUp={(e) => { if (e.key === "Shift") shiftHeldRef.current = false; }}>
+      {/* Selection toolbar — floats at top when ≥1 block is selected */}
+      {selectedBlockIds.size > 0 && (
+        <div className="sticky top-0 z-30 mb-2 flex flex-wrap items-center gap-1.5 rounded-md border border-theme-300 bg-theme-50 px-3 py-1.5 shadow-sm text-xs">
+          <span className="font-semibold text-theme-700">{selectedBlockIds.size}件選択中</span>
+          <span className="text-gray-400">|</span>
+          <button
+            onClick={() => copySelectedBlocks(false)}
+            className="rounded border border-gray-300 bg-white px-2 py-0.5 text-gray-700 hover:bg-gray-100"
+            title="⌘C"
+          >コピー</button>
+          <button
+            onClick={() => copySelectedBlocks(true)}
+            className="rounded border border-gray-300 bg-white px-2 py-0.5 text-gray-700 hover:bg-gray-100"
+            title="⌘X"
+          >カット</button>
+          <button
+            onClick={() => indentSelectedBlocks(true)}
+            className="rounded border border-gray-300 bg-white px-2 py-0.5 text-gray-700 hover:bg-gray-100"
+            title="Shift+Tab"
+          >⇐ アウトデント</button>
+          <button
+            onClick={() => indentSelectedBlocks(false)}
+            className="rounded border border-gray-300 bg-white px-2 py-0.5 text-gray-700 hover:bg-gray-100"
+            title="Tab"
+          >インデント ⇒</button>
+          <button
+            onClick={deleteSelectedBlocks}
+            className="rounded border border-red-300 bg-white px-2 py-0.5 text-red-600 hover:bg-red-50"
+            title="Delete"
+          >削除</button>
+          <span className="ml-auto text-gray-500 hidden sm:inline">
+            Shift/⌘+クリック・⌘A で選択、Esc で解除
+          </span>
+          <button
+            onClick={clearSelection}
+            className="rounded px-1.5 py-0.5 text-gray-500 hover:bg-gray-100"
+            title="Esc"
+          >✕</button>
+        </div>
+      )}
       {conflict && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
@@ -1595,6 +1777,7 @@ interface BlockLineProps {
   onMeetingClick?: (meetingId: string) => void;
   onApplySuggestion: (name: string) => void;
   onBlockMouseDown: (e: React.MouseEvent, blockIndex: number) => void;
+  onBulletMouseDown?: (e: React.MouseEvent, blockIndex: number) => void;
   skipMouseUpRef: React.MutableRefObject<boolean>;
   onIndent?: (block: Block) => void;
   onOutdent?: (block: Block) => void;
@@ -1603,13 +1786,13 @@ interface BlockLineProps {
 const BlockLine = React.memo(function BlockLine({ block, blockIndex, isEditing, isSelected, editContent, showSuggestions,
   suggestions, selectedSuggestion, allPages, allTags, allMeetings, setInputRef, onStartEditing,
   onEditContentChange, onFinishEditing, onKeyDown, onPaste, onPageClick, onTagClick, onDateClick, onMeetingClick,
-  onApplySuggestion, onBlockMouseDown, skipMouseUpRef, onIndent, onOutdent,
+  onApplySuggestion, onBlockMouseDown, onBulletMouseDown, skipMouseUpRef, onIndent, onOutdent,
 }: BlockLineProps) {
   const indent = block.indent_level * 24;
 
   return (
     <div className={`group relative flex items-stretch min-h-[2em] ${isSelected ? "bg-blue-100 rounded" : ""} ${!isEditing ? "cursor-text hover:bg-gray-50 rounded" : ""}`}
-      style={{ paddingLeft: `${indent}px` }}
+      style={{ paddingLeft: `${indent + 14}px` }}
       onMouseDown={(e) => {
         // Don't trigger selection/re-render when clicking on links — it replaces DOM nodes
         // and prevents the click event from firing
@@ -1647,6 +1830,20 @@ const BlockLine = React.memo(function BlockLine({ block, blockIndex, isEditing, 
         if (target.closest('.gfm-link')) return;
         onStartEditing(block);
       }}>
+      {/* Bullet handle — click to select just this block (Cmd/Shift to extend). */}
+      {onBulletMouseDown && (
+        <span
+          onMouseDown={(e) => { e.stopPropagation(); onBulletMouseDown(e, blockIndex); }}
+          onClick={(e) => e.stopPropagation()}
+          className={`absolute cursor-pointer select-none flex items-center justify-center ${
+            isSelected ? "opacity-100" : "opacity-40 group-hover:opacity-100"
+          }`}
+          style={{ left: indent, top: 0, bottom: 0, width: 14 }}
+          title="クリックで選択 / ⌘+クリックで追加選択 / Shift+クリックで範囲選択"
+        >
+          <span className={`block h-1.5 w-1.5 rounded-full transition ${isSelected ? "bg-theme-600" : "bg-gray-400"}`} />
+        </span>
+      )}
       {isEditing && /^!ai\s/i.test(editContent) ? (
         <div className="relative flex-1">
           <div className="flex items-center gap-2 rounded-lg border border-purple-300 bg-purple-50 px-3 py-1.5">

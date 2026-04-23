@@ -62,15 +62,38 @@ interface Props {
 
 const HOUR_HEIGHT = 60;
 const MIN_STEP = 15;
-const DAY_COUNT = 7;
+const DEFAULT_DAY_COUNT = 7;
 const DEFAULT_DURATION_MIN = 60;
+type DayCount = 1 | 3 | 7;
 
 // ─── Utilities ──────────────────────────────────────────
 
 function pad(n: number): string { return n < 10 ? `0${n}` : String(n); }
 
+function ymdOf(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function isoLocal(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function parseYmd(s: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return new Date(s);
+  return new Date(+m[1], +m[2] - 1, +m[3]);
+}
+
+function fmtDueRange(s?: string | null, e?: string | null): string {
+  const fmt = (x: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(x);
+    if (!m) return x;
+    return `${+m[2]}月${+m[3]}日`;
+  };
+  if (s && e) return s === e ? fmt(s) : `${fmt(s)} 〜 ${fmt(e)}`;
+  if (s) return `${fmt(s)} 〜`;
+  if (e) return `〜 ${fmt(e)}`;
+  return "（未設定）";
 }
 
 function parseISO(s: string): Date {
@@ -160,29 +183,31 @@ export default function CalendarView({
   slots, busySlots, actions, weekStart, setWeekStart,
   onSlotChange, onBusyChange, onToggleDone, onOpenAction,
 }: Props) {
-  const days = useMemo(() => Array.from({ length: DAY_COUNT }, (_, i) => addDays(weekStart, i)), [weekStart]);
+  const [dayCount, setDayCount] = useState<DayCount>(DEFAULT_DAY_COUNT);
+
+  const days = useMemo(() => Array.from({ length: dayCount }, (_, i) => addDays(weekStart, i)), [weekStart, dayCount]);
 
   const slotsByDay = useMemo(() => {
-    const arr: Slot[][] = [[], [], [], [], [], [], []];
+    const arr: Slot[][] = Array.from({ length: dayCount }, () => []);
     for (const s of slots) {
       const d = parseISO(s.start_at);
-      for (let i = 0; i < DAY_COUNT; i++) {
+      for (let i = 0; i < dayCount; i++) {
         if (d >= days[i] && d < addDays(days[i], 1)) { arr[i].push(s); break; }
       }
     }
     return arr;
-  }, [slots, days]);
+  }, [slots, days, dayCount]);
 
   const busyByDay = useMemo(() => {
-    const arr: BusySlot[][] = [[], [], [], [], [], [], []];
+    const arr: BusySlot[][] = Array.from({ length: dayCount }, () => []);
     for (const b of busySlots) {
       const d = parseISO(b.start_at);
-      for (let i = 0; i < DAY_COUNT; i++) {
+      for (let i = 0; i < dayCount; i++) {
         if (d >= days[i] && d < addDays(days[i], 1)) { arr[i].push(b); break; }
       }
     }
     return arr;
-  }, [busySlots, days]);
+  }, [busySlots, days, dayCount]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -201,6 +226,23 @@ export default function CalendarView({
 
   const [drag, setDrag] = useState<DragState>(null);
   const [editingBusy, setEditingBusy] = useState<string | null>(null); // base id being edited
+
+  /**
+   * After-range confirmation.
+   *
+   * Only fires when the drop/move target is LATER than the action's due_end
+   * (before-range drops pass through silently). The modal offers:
+   *   - "はい" → extend Gantt end to the drop day and place at drop position
+   *   - "いいえ" → snap the slot's date to the current due_end (time preserved)
+   *              and leave the Gantt range untouched.
+   */
+  const [pendingAfterRange, setPendingAfterRange] = useState<{
+    actionLabel: string;
+    dueEnd: string;
+    slotYmd: string;
+    expandCommit: () => Promise<void>;
+    snapCommit: () => Promise<void>;
+  } | null>(null);
 
   // Instant tooltip (portal-rendered so it's never clipped by the scroll container
   // or hidden behind sibling slots). Shown while the pointer is over a slot.
@@ -248,8 +290,8 @@ export default function CalendarView({
     const inside = rawX >= 0 && rawX < rect.width && rawY >= 0 && rawY < rect.height;
     const x = Math.max(0, Math.min(rect.width - 1, rawX));
     const y = Math.max(0, Math.min(rect.height - 1, rawY)) + grid.scrollTop;
-    const colW = rect.width / DAY_COUNT;
-    const day = Math.max(0, Math.min(DAY_COUNT - 1, Math.floor(x / colW)));
+    const colW = rect.width / dayCount;
+    const day = Math.max(0, Math.min(dayCount - 1, Math.floor(x / colW)));
     const minutes = minutesFromTop((y / HOUR_HEIGHT) * 60);
     return { day, minutes, inside };
   };
@@ -284,15 +326,44 @@ export default function CalendarView({
         if (drag.mode === "new-action") {
           if (drag.enteredGrid && drag.ghostEndMin > drag.ghostStartMin) {
             const dayDate = days[drag.ghostDay];
-            await fetch("/api/action-slots", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action_block_id: drag.actionBlockId,
-                start_at: composeISO(dayDate, drag.ghostStartMin),
-                end_at: composeISO(dayDate, drag.ghostEndMin),
-              }),
-            });
-            onSlotChange();
+            const slotYmd = ymdOf(dayDate);
+            const action = actions.find((a) => a.id === drag.actionBlockId);
+            const startMin = drag.ghostStartMin;
+            const endMin = drag.ghostEndMin;
+            const actionBlockId = drag.actionBlockId;
+            const createAt = async (d: Date) => {
+              await fetch("/api/action-slots", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  action_block_id: actionBlockId,
+                  start_at: composeISO(d, startMin),
+                  end_at: composeISO(d, endMin),
+                }),
+              });
+              onSlotChange();
+            };
+            if (action && action.due_end && slotYmd > action.due_end) {
+              // After Gantt end → ask
+              const label = action.content.replace(/^!(action|done)(@\S+)?\s+/i, "").slice(0, 60);
+              const dueEnd = action.due_end;
+              const dueStart = action.due_start || dueEnd;
+              setPendingAfterRange({
+                actionLabel: label,
+                dueEnd,
+                slotYmd,
+                expandCommit: async () => {
+                  await fetch("/api/actions/resize", {
+                    method: "PUT", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ blockId: actionBlockId, dueStart, dueEnd: slotYmd }),
+                  });
+                  await createAt(dayDate);
+                },
+                snapCommit: async () => { await createAt(parseYmd(dueEnd)); },
+              });
+            } else {
+              // In range OR before Gantt start → place as-is silently
+              await createAt(dayDate);
+            }
           }
         } else if (drag.mode === "new-busy") {
           if (drag.enteredGrid && drag.ghostEndMin > drag.ghostStartMin) {
@@ -310,14 +381,43 @@ export default function CalendarView({
           }
         } else if (drag.mode === "move-action") {
           const dayDate = days[drag.curDay];
-          await fetch(`/api/action-slots/${drag.slotId}`, {
-            method: "PUT", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              start_at: composeISO(dayDate, drag.curStartMin),
-              end_at: composeISO(dayDate, drag.curEndMin),
-            }),
-          });
-          onSlotChange();
+          const slotYmd = ymdOf(dayDate);
+          const slot = slots.find((s) => s.id === drag.slotId);
+          const action = slot ? actions.find((a) => a.id === slot.action_block_id) : undefined;
+          const curStartMin = drag.curStartMin;
+          const curEndMin = drag.curEndMin;
+          const slotId = drag.slotId;
+          const moveTo = async (d: Date) => {
+            await fetch(`/api/action-slots/${slotId}`, {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                start_at: composeISO(d, curStartMin),
+                end_at: composeISO(d, curEndMin),
+              }),
+            });
+            onSlotChange();
+          };
+          if (action && action.due_end && slotYmd > action.due_end) {
+            const label = action.content.replace(/^!(action|done)(@\S+)?\s+/i, "").slice(0, 60);
+            const dueEnd = action.due_end;
+            const dueStart = action.due_start || dueEnd;
+            const actionBlockId = action.id;
+            setPendingAfterRange({
+              actionLabel: label,
+              dueEnd,
+              slotYmd,
+              expandCommit: async () => {
+                await fetch("/api/actions/resize", {
+                  method: "PUT", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ blockId: actionBlockId, dueStart, dueEnd: slotYmd }),
+                });
+                await moveTo(dayDate);
+              },
+              snapCommit: async () => { await moveTo(parseYmd(dueEnd)); },
+            });
+          } else {
+            await moveTo(dayDate);
+          }
         } else if (drag.mode === "move-busy") {
           // Shifts the base definition. For recurring slots this shifts all future instances.
           const dayDate = days[drag.curDay];
@@ -451,13 +551,42 @@ export default function CalendarView({
     <div className="rounded-lg border border-gray-200 bg-white overflow-hidden flex flex-col h-[calc(100vh-180px)]">
       {/* Header: nav */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 flex-shrink-0">
-        <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">←</button>
-        <button onClick={() => setWeekStart(sundayOf(new Date()))} className="rounded px-2 py-1 text-sm text-theme-600 hover:bg-theme-50 font-medium">今週</button>
-        <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">→</button>
+        <button onClick={() => setWeekStart(addDays(weekStart, -dayCount))} className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">←</button>
+        <button
+          onClick={() => setWeekStart(dayCount === 7 ? sundayOf(new Date()) : startOfDay(new Date()))}
+          className="rounded px-2 py-1 text-sm text-theme-600 hover:bg-theme-50 font-medium"
+        >{dayCount === 7 ? "今週" : "今日"}</button>
+        <button onClick={() => setWeekStart(addDays(weekStart, dayCount))} className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">→</button>
         <span className="ml-3 text-sm font-medium text-gray-700">{fmtMonth(weekStart)}</span>
-        <span className="ml-auto text-xs text-gray-500">
-          {weekStart.getMonth() + 1}/{weekStart.getDate()} 〜 {addDays(weekStart, 6).getMonth() + 1}/{addDays(weekStart, 6).getDate()}
+        <span className="ml-3 text-xs text-gray-500">
+          {weekStart.getMonth() + 1}/{weekStart.getDate()}
+          {dayCount > 1 && <> 〜 {addDays(weekStart, dayCount - 1).getMonth() + 1}/{addDays(weekStart, dayCount - 1).getDate()}</>}
         </span>
+        {/* View toggle: 1-day / 3-day / 7-day */}
+        <div className="ml-auto inline-flex rounded border border-gray-300 overflow-hidden text-xs">
+          {([1, 3, 7] as const).map((n) => (
+            <button
+              key={n}
+              onClick={() => {
+                // Switch view. When expanding to 7-day, snap view start to Sunday;
+                // when narrowing to 1 or 3 days, keep current start but clamp to
+                // today if the current start is before today (avoid showing past).
+                if (n === 7) {
+                  setWeekStart(sundayOf(weekStart));
+                } else if (dayCount === 7) {
+                  // From week view → focus on today for usability
+                  setWeekStart(startOfDay(new Date()));
+                }
+                setDayCount(n);
+              }}
+              className={`px-2.5 py-1 transition ${
+                dayCount === n
+                  ? "bg-theme-500 text-white"
+                  : "bg-white text-gray-600 hover:bg-gray-50"
+              } ${n !== 1 ? "border-l border-gray-300" : ""}`}
+            >{n}日</button>
+          ))}
+        </div>
       </div>
 
       {/* Day headers */}
@@ -569,6 +698,55 @@ export default function CalendarView({
           ))}
         </div>
       </div>
+
+      {/* After-Gantt-end confirmation modal */}
+      {pendingAfterRange && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPendingAfterRange(null)}>
+          <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-gray-800 mb-2">期間外ですが設定しますか？</h3>
+            <div className="space-y-2 text-sm text-gray-700">
+              <div>
+                <span className="font-medium">アクション:</span>{" "}
+                <span className="text-gray-600">{pendingAfterRange.actionLabel || "（内容なし）"}</span>
+              </div>
+              <div>
+                <span className="font-medium">ガント終了日:</span>{" "}
+                <span className="text-gray-600">{pendingAfterRange.dueEnd}</span>
+              </div>
+              <div>
+                <span className="font-medium">配置しようとした日:</span>{" "}
+                <span className="text-gray-600">{pendingAfterRange.slotYmd}</span>
+              </div>
+              <div className="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 space-y-1">
+                <div>
+                  <span className="font-semibold">はい</span>: ガントの終了日を <span className="font-semibold">{pendingAfterRange.slotYmd}</span> に拡張してこの日に配置
+                </div>
+                <div>
+                  <span className="font-semibold">いいえ</span>: ガント終了日 <span className="font-semibold">{pendingAfterRange.dueEnd}</span> にスナップして配置（ガントは変更しません）
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-5 pt-3 border-t border-gray-100">
+              <button
+                onClick={async () => {
+                  const p = pendingAfterRange;
+                  setPendingAfterRange(null);
+                  try { await p.snapCommit(); } catch { /* ignore */ }
+                }}
+                className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+              >いいえ（期限内にスナップ）</button>
+              <button
+                onClick={async () => {
+                  const p = pendingAfterRange;
+                  setPendingAfterRange(null);
+                  try { await p.expandCommit(); } catch { /* ignore */ }
+                }}
+                className="rounded bg-theme-500 text-white px-4 py-1.5 text-sm font-medium hover:bg-theme-600"
+              >はい（期限を拡張）</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Busy slot edit modal */}
       {editingBusy && (

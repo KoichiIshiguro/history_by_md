@@ -199,6 +199,62 @@ export function rewriteActionDate(
   return `!${kind}@${newSpec} ${body}`;
 }
 
+/**
+ * Always-full date spec: "YYYY/MM/DD-YYYY/MM/DD" (both sides, zero-padded).
+ * Used at save time to lock in the year, so e.g. "!action@4/3" typed in 2026
+ * is canonicalized to "!action@2026/04/03-2026/04/03" and won't drift when
+ * the calendar year rolls over.
+ */
+export function formatDateSpecFull(startISO: string, endISO: string): string {
+  const toSlash = (iso: string) => {
+    const [y, m, d] = iso.split("-");
+    return `${y}/${m}/${d}`;
+  };
+  return `${toSlash(startISO)}-${toSlash(endISO)}`;
+}
+
+/**
+ * Normalize an action block's date spec to the full `@YYYY/MM/DD-YYYY/MM/DD`
+ * form. Leaves non-action content untouched.
+ *
+ *   - If the action has a parseable @-spec, rewrite it in full form.
+ *   - If the action has NO @-spec, inject one using `defaultDate`.
+ *   - If it's not an action OR the spec is unparseable, return unchanged.
+ */
+export function normalizeActionDate(
+  content: string,
+  defaultDate: string,
+  currentYear?: number,
+): string {
+  const m = content.match(ACTION_PREFIX_RE);
+  if (!m) return content;
+  const kind = m[1];
+  const spec = m[2] ?? null;
+  const body = m[3] ?? "";
+  const year = currentYear ?? new Date().getFullYear();
+
+  let startISO: string | null = null;
+  let endISO: string | null = null;
+
+  if (spec) {
+    const parsed = parseDateSpec(spec, year);
+    if (parsed) {
+      startISO = parsed.start;
+      endISO = parsed.end;
+    } else {
+      // Unparseable spec → leave content unchanged (user may be mid-edit)
+      return content;
+    }
+  } else {
+    if (!defaultDate) return content; // nothing to anchor on
+    startISO = defaultDate;
+    endISO = defaultDate;
+  }
+
+  const fullSpec = formatDateSpecFull(startISO, endISO);
+  return `!${kind}@${fullSpec} ${body}`;
+}
+
 /** Today in YYYY-MM-DD (local time) */
 export function todayISO(): string {
   const d = new Date();
