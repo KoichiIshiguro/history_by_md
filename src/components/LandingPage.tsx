@@ -1,8 +1,25 @@
 "use client";
 
 import { signIn } from "next-auth/react";
+import { useState } from "react";
 
-export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
+export default function LandingPage({ isDev = false, demoEnabled = false }: { isDev?: boolean; demoEnabled?: boolean }) {
+  const [demoEmail, setDemoEmail] = useState("");
+  const [demoError, setDemoError] = useState<string | null>(null);
+  const [demoBusy, setDemoBusy] = useState(false);
+
+  const doDemoLogin = async () => {
+    const email = demoEmail.trim();
+    if (!email) { setDemoError("メールアドレスを入力してください"); return; }
+    setDemoBusy(true); setDemoError(null);
+    const res = await signIn("demo", { email, redirect: false, callbackUrl: "/" });
+    setDemoBusy(false);
+    if (res?.error) {
+      setDemoError("このメールアドレスはデモ用として登録されていません");
+    } else if (res?.url) {
+      window.location.href = res.url;
+    }
+  };
   return (
     <div className="min-h-screen bg-white">
       {/* Hero */}
@@ -42,6 +59,32 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
                   </button>
                 )}
               </div>
+              {/* Demo login — enabled when DEMO_LOGIN_EMAILS is set in env */}
+              {demoEnabled && (
+                <div className="mt-5 rounded-lg border border-dashed border-gray-300 bg-white/70 p-3 max-w-md">
+                  <div className="text-xs font-medium text-gray-600 mb-1.5">デモアカウントでログイン</div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="email"
+                      value={demoEmail}
+                      onChange={(e) => setDemoEmail(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") doDemoLogin(); }}
+                      placeholder="demo@example.com"
+                      className="flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-theme-400"
+                      disabled={demoBusy}
+                    />
+                    <button
+                      onClick={doDemoLogin}
+                      disabled={demoBusy}
+                      className="rounded-md bg-gray-800 px-4 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-60"
+                    >{demoBusy ? "..." : "ログイン"}</button>
+                  </div>
+                  {demoError && <div className="mt-1.5 text-xs text-red-500">{demoError}</div>}
+                  <div className="mt-1.5 text-[10px] text-gray-400">
+                    許可されたデモ用メールのみ入場可・パスワードなし
+                  </div>
+                </div>
+              )}
             </div>
             {/* Hero illustration */}
             <div className="mt-12 md:mt-0 flex-shrink-0">
