@@ -314,4 +314,25 @@ function initDb(db: Database.Database) {
       CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_id);
     `);
   }
+
+  /**
+   * Crash / deploy recovery for in-flight meeting transcriptions.
+   *
+   * The transcribe pipeline is fire-and-forget on the Node side. If the
+   * process dies mid-pipeline (deploy, OOM, restart), the row is left
+   * stuck at status='transcribing' or 'polishing' forever — the catch
+   * block never runs because the process itself was killed.
+   *
+   * On every cold start we mark any such row as 'error' with a clear
+   * message so the user sees a failed state instead of a perpetual
+   * spinner. (Audio file remains on disk for ~24h so the user can retry
+   * via re-upload, and we tell them so.)
+   */
+  db.prepare(`
+    UPDATE meetings
+       SET status = 'error',
+           error_message = 'サーバー再起動またはデプロイで処理が中断されました。再アップロードしてください。',
+           updated_at = datetime('now')
+     WHERE status IN ('uploaded', 'transcribing', 'transcribed', 'polishing')
+  `).run();
 }
