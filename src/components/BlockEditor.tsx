@@ -45,6 +45,40 @@ interface Block {
   page_id?: string | null;
   source_page_name?: string;
   source_page_id?: string;
+  /**
+   * Server-acknowledged version. Bumped on every server-side UPDATE.
+   * Undefined for blocks that exist only client-side (not yet sent).
+   */
+  version?: number;
+}
+
+/**
+ * Per-block snapshot from the last server interaction (initial fetch +
+ * each successful patch). Used to compute diffs for the next patch save.
+ * Without this we can't tell which blocks the client actually modified
+ * vs blocks that were just re-rendered, which makes per-block
+ * conflict-detection moot.
+ */
+interface BlockSnapshot {
+  content: string;
+  indent_level: number;
+  sort_order: number;
+  version: number;
+}
+
+/**
+ * Server-side block state returned alongside a conflict result. Shown to
+ * the user so they can pick "mine" / "theirs" / "both".
+ */
+interface BlockConflict {
+  id: string;
+  serverContent: string;
+  serverIndent: number;
+  serverSortOrder: number;
+  serverVersion: number;
+  /** What the client tried to save when the conflict happened. */
+  localContent: string;
+  localIndent: number;
 }
 
 /**
@@ -293,6 +327,19 @@ function BlockEditorInner({
   // Conflict modal state: holds just the text the user was editing (not the
   // whole scope). If there was no active edit, text is "" and we just refetch.
   const [conflict, setConflict] = useState<{ text: string; manualCopyNeeded?: boolean } | null>(null);
+  /**
+   * Per-block conflict map (new patch-based path). When a block-level
+   * baseVersion mismatch comes back from /api/blocks/patch, we stash the
+   * server state here and render an inline resolution card above the
+   * affected block. Independent block edits stay un-conflicted, so this
+   * only surfaces when two devices edited the SAME block.
+   */
+  const [blockConflicts, setBlockConflicts] = useState<Map<string, BlockConflict>>(new Map());
+  /**
+   * Snapshot of last server-acked state per block, used to diff for the
+   * next patch. Populated by fetchBlocks() and after each successful save.
+   */
+  const snapshotRef = useRef<Map<string, BlockSnapshot>>(new Map());
   const [dateRefs, setDateRefs] = useState<Block[]>([]);
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
@@ -356,6 +403,45 @@ function BlockEditorInner({
     } else {
       url += `?date=${selectedDate}`;
     }
+
+    /**
+     * Merge incoming server blocks against current state without clobbering
+     * unsaved local edits. Strategy:
+     *   - For a block that is currently being edited by the user
+     *     (editingBlockIdRef matches its id) → keep the local copy.
+     *   - For a block that has an unresolved conflict → keep the local copy
+     *     (the conflict card needs the local content to compare against).
+     *   - Otherwise → take the server version.
+     * Snapshot is rebuilt fresh from server (it represents server-acked
+     * state, not local edits).
+     */
+    const mergeWithLocal = (serverBlocks: Block[]): Block[] => {
+      const localBlocks = blocksRef.current;
+      const editingId = editingBlockIdRef.current;
+      const conflictIds = new Set(blockConflicts.keys());
+      const localById = new Map(localBlocks.map((b) => [b.id, b]));
+      return serverBlocks.map((sb) => {
+        if (sb.id === editingId || conflictIds.has(sb.id)) {
+          const local = localById.get(sb.id);
+          if (local) return { ...local, version: sb.version };
+        }
+        return sb;
+      });
+    };
+
+    const buildSnapshot = (serverBlocks: Block[]) => {
+      const snap = new Map<string, BlockSnapshot>();
+      serverBlocks.forEach((b, i) => {
+        snap.set(b.id, {
+          content: b.content,
+          indent_level: b.indent_level,
+          sort_order: typeof b.sort_order === "number" ? b.sort_order : i,
+          version: b.version ?? 1,
+        });
+      });
+      snapshotRef.current = snap;
+    };
+
     try {
       const res = await fetch(url);
       if (myReqId !== fetchReqIdRef.current) return; // a newer request superseded us
@@ -363,7 +449,9 @@ function BlockEditorInner({
         const data = await res.json();
         if (myReqId !== fetchReqIdRef.current) return; // re-check after JSON parse
         if ((viewMode === "page" || viewMode === "meeting") && data.pageBlocks !== undefined) {
-          setBlocks(data.pageBlocks);
+          const serverBlocks = data.pageBlocks as Block[];
+          buildSnapshot(serverBlocks);
+          setBlocks(mergeWithLocal(serverBlocks));
           setPageRefs(data.pageRefs || []);
           setDateRefs(data.dateRefs || []);
           setLastVersion(data.version ?? null);
@@ -372,14 +460,18 @@ function BlockEditorInner({
           setPageRefs([]);
           setDateRefs([]);
           setLastVersion(null);
+          snapshotRef.current = new Map(); // tag view doesn't use patch saves
         } else {
+          let serverBlocks: Block[] = [];
           if (Array.isArray(data)) {
-            setBlocks(data);
+            serverBlocks = data as Block[];
             setLastVersion(null);
           } else {
-            setBlocks(data.pageBlocks || []);
+            serverBlocks = (data.pageBlocks || []) as Block[];
             setLastVersion(data.version ?? null);
           }
+          buildSnapshot(serverBlocks);
+          setBlocks(mergeWithLocal(serverBlocks));
           setPageRefs([]);
           setDateRefs([]);
         }
@@ -390,84 +482,235 @@ function BlockEditorInner({
       // newer request is still in flight.
       if (myReqId === fetchReqIdRef.current) setLoading(false);
     }
-  }, [viewMode, selectedDate, selectedPageId, selectedTagId, selectedMeetingId]);
+  }, [viewMode, selectedDate, selectedPageId, selectedTagId, selectedMeetingId, blockConflicts]);
 
   useEffect(() => { fetchBlocks(); }, [fetchBlocks]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clear stale per-block conflicts when the scope changes (otherwise a
+  // banner from page A would surface on page B if a block id collides).
+  useEffect(() => {
+    setBlockConflicts(new Map());
+  }, [viewMode, selectedDate, selectedPageId, selectedMeetingId]);
 
   // Re-fetch blocks when actions are toggled in ActionList
   useEffect(() => {
     if (actionVersion && actionVersion > 0) { fetchBlocks(); }
   }, [actionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Save blocks to API, then notify sidebar via stable refs (no dependency chain).
-  // On HTTP 409 (version conflict), opens the conflict modal and returns without
-  // dispatching events — the pending blocks are kept in state so the user can
-  // decide to copy-and-refresh or discard.
-  const saveBlocks = useCallback(async (updatedBlocks: Block[]) => {
-    const payloadBlocks = updatedBlocks.map((b, i) => ({ id: b.id, content: b.content, indent_level: b.indent_level, sort_order: i }));
-    const expectedVersion = lastVersionRef.current;
-    let res: Response | null = null;
+  /**
+   * Conflict resolution actions.
+   *
+   *   - keepLocal:   user wants their version. We've already synced
+   *                  snapshot to server's version, so the next save will
+   *                  send the local content as an upsert with the server's
+   *                  baseVersion → succeed and overwrite the server.
+   *   - takeServer:  replace the local block with the server's content.
+   *   - keepBoth:    insert a new block right after, copy server's content
+   *                  there, keep local in the original position. Both end
+   *                  up persisted.
+   * In all three cases the conflict entry is cleared from blockConflicts.
+   */
+  const resolveConflictKeepLocal = useCallback((id: string) => {
+    setBlockConflicts((prev) => {
+      const m = new Map(prev); m.delete(id); return m;
+    });
+    // Trigger a save so the local content reaches the server (snapshot is
+    // already synced to the conflict's server version, so this will succeed).
+    debouncedSaveRef.current?.(blocksRef.current);
+  }, []);
 
-    if (viewMode === "meeting" && selectedMeetingId) {
-      res = await fetch("/api/blocks/save", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meetingId: selectedMeetingId, expectedVersion, blocks: payloadBlocks }),
-      });
-    } else if (viewMode === "page" && selectedPageId) {
-      res = await fetch("/api/blocks/save", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pageId: selectedPageId, expectedVersion, blocks: payloadBlocks }),
-      });
-    } else if (viewMode === "tag") {
-      // Tag view uses per-block PUT; no bulk version check
+  const resolveConflictTakeServer = useCallback((id: string) => {
+    setBlockConflicts((prev) => {
+      const m = new Map(prev);
+      const conflict = m.get(id);
+      m.delete(id);
+      if (conflict) {
+        const updated = blocksRef.current.map((b) =>
+          b.id === id ? { ...b, content: conflict.serverContent, indent_level: conflict.serverIndent } : b
+        );
+        setBlocks(updated);
+      }
+      return m;
+    });
+  }, []);
+
+  const resolveConflictKeepBoth = useCallback((id: string) => {
+    setBlockConflicts((prev) => {
+      const m = new Map(prev);
+      const conflict = m.get(id);
+      m.delete(id);
+      if (conflict) {
+        const idx = blocksRef.current.findIndex((b) => b.id === id);
+        if (idx >= 0) {
+          const newBlock: Block = {
+            id: crypto.randomUUID(),
+            content: conflict.serverContent,
+            indent_level: conflict.serverIndent,
+            sort_order: idx + 1,
+            date: blocksRef.current[idx].date,
+            page_id: blocksRef.current[idx].page_id,
+          };
+          const updated = [...blocksRef.current];
+          updated.splice(idx + 1, 0, newBlock);
+          const reordered = updated.map((b, i) => ({ ...b, sort_order: i }));
+          setBlocks(reordered);
+          debouncedSaveRef.current?.(reordered);
+        }
+      }
+      return m;
+    });
+  }, []);
+
+  // Forward-declared ref to debouncedSave (defined below) so resolution
+  // helpers can re-trigger a save without circular hook deps.
+  const debouncedSaveRef = useRef<((blocks: Block[]) => void) | null>(null);
+
+  /**
+   * Patch-based save with per-block optimistic concurrency.
+   *
+   * Diffs `updatedBlocks` against `snapshotRef.current` to build the
+   * minimum set of upsert/delete ops, then sends them to /api/blocks/patch.
+   * Per-op results:
+   *   - applied   → bump that block's snapshot to the new version
+   *   - deleted   → drop from snapshot
+   *   - conflict  → push into blockConflicts; the inline UI lets the user
+   *                 pick mine / theirs / both. Local block stays put so
+   *                 nothing is lost; snapshot syncs to server's version so
+   *                 subsequent saves don't keep colliding.
+   *
+   * Tag view stays on per-block PUT (no scope concept there).
+   */
+  const saveBlocks = useCallback(async (updatedBlocks: Block[]) => {
+    if (viewMode === "tag") {
       for (const block of updatedBlocks) {
         await fetch("/api/blocks", {
           method: "PUT", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: block.id, content: block.content, indent_level: block.indent_level, sort_order: block.sort_order }),
         });
       }
-    } else {
-      res = await fetch("/api/blocks/save", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: selectedDate, expectedVersion, blocks: payloadBlocks }),
-      });
-    }
-
-    // Handle conflict (only bulk save endpoints return 409).
-    // We only copy the text of the block the user was actively editing.
-    // If there was no active edit, just silently pull the latest from the
-    // server — no modal, no dialog.
-    if (res && res.status === 409) {
-      const activeText = editingBlockIdRef.current ? editContentRef.current : "";
-      if (!activeText) {
-        await fetchBlocks();
-        return;
-      }
-      setConflict({ text: activeText });
       return;
     }
 
-    // Update version token from response (only for bulk save endpoints)
-    if (res && res.ok) {
-      try {
-        const data = await res.json();
-        if (data && typeof data.version !== "undefined") {
-          setLastVersion(data.version ?? null);
-        }
-      } catch { /* ignore */ }
+    type PatchScope = { kind: "date" | "page" | "meeting"; key: string };
+    let scope: PatchScope;
+    if (viewMode === "meeting" && selectedMeetingId) scope = { kind: "meeting", key: selectedMeetingId };
+    else if (viewMode === "page" && selectedPageId) scope = { kind: "page", key: selectedPageId };
+    else scope = { kind: "date", key: selectedDate };
+
+    const snapshot = snapshotRef.current;
+    const currentIds = new Set(updatedBlocks.map((b) => b.id));
+
+    type UpsertOp = { op: "upsert"; id: string; content: string; indent_level: number; sort_order: number; baseVersion: number | null };
+    type DeleteOp = { op: "delete"; id: string; baseVersion: number };
+    const ops: Array<UpsertOp | DeleteOp> = [];
+
+    // Build upserts: only blocks that differ from snapshot. Skip blocks
+    // currently in conflict — the user must resolve those manually first
+    // (otherwise we'd just keep colliding on every debounce tick).
+    updatedBlocks.forEach((b, idx) => {
+      if (blockConflicts.has(b.id)) return;
+      const sort_order = idx;
+      const snap = snapshot.get(b.id);
+      if (!snap) {
+        ops.push({ op: "upsert", id: b.id, content: b.content, indent_level: b.indent_level, sort_order, baseVersion: null });
+      } else if (snap.content !== b.content || snap.indent_level !== b.indent_level || snap.sort_order !== sort_order) {
+        ops.push({ op: "upsert", id: b.id, content: b.content, indent_level: b.indent_level, sort_order, baseVersion: snap.version });
+      }
+    });
+
+    // Build deletes: blocks that were in the snapshot but not in current state
+    for (const [id, snap] of snapshot) {
+      if (!currentIds.has(id)) {
+        ops.push({ op: "delete", id, baseVersion: snap.version });
+      }
     }
 
-    // Notify sidebar directly via CustomEvent — bypasses MainApp state entirely
+    if (ops.length === 0) return;
+
+    let res: Response | null = null;
+    try {
+      res = await fetch("/api/blocks/patch", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, ops }),
+      });
+    } catch {
+      return; // network error — keep snapshot, retry next tick
+    }
+    if (!res.ok) return;
+
+    type PatchResult =
+      | { id: string; status: "applied"; version: number }
+      | { id: string; status: "deleted" }
+      | { id: string; status: "conflict"; server: { content: string; indent_level: number; sort_order: number; version: number; due_start: string | null; due_end: string | null } | null };
+    const data = await res.json() as { results: PatchResult[]; scopeVersion: string | null };
+
+    // Reconcile snapshot + conflicts based on results
+    const newSnapshot = new Map(snapshot);
+    const newConflicts = new Map<string, BlockConflict>();
+    for (const r of data.results) {
+      const localIdx = updatedBlocks.findIndex((b) => b.id === r.id);
+      const local = localIdx >= 0 ? updatedBlocks[localIdx] : null;
+      if (r.status === "applied" && local) {
+        newSnapshot.set(r.id, {
+          content: local.content,
+          indent_level: local.indent_level,
+          sort_order: localIdx,
+          version: r.version,
+        });
+      } else if (r.status === "deleted") {
+        newSnapshot.delete(r.id);
+      } else if (r.status === "conflict") {
+        if (r.server) {
+          newConflicts.set(r.id, {
+            id: r.id,
+            serverContent: r.server.content,
+            serverIndent: r.server.indent_level,
+            serverSortOrder: r.server.sort_order,
+            serverVersion: r.server.version,
+            localContent: local?.content || "",
+            localIndent: local?.indent_level ?? 0,
+          });
+          // Re-stamp snapshot to server's version so subsequent ops carry
+          // the right baseVersion. Local block content stays in `blocks`
+          // state until the user resolves the conflict.
+          newSnapshot.set(r.id, {
+            content: r.server.content,
+            indent_level: r.server.indent_level,
+            sort_order: r.server.sort_order,
+            version: r.server.version,
+          });
+        } else {
+          // Block was deleted on the server while we were editing it.
+          // Drop from snapshot; local copy stays as-is (next save will
+          // re-insert it as a new block).
+          newSnapshot.delete(r.id);
+        }
+      }
+    }
+    snapshotRef.current = newSnapshot;
+    if (newConflicts.size > 0) {
+      setBlockConflicts((prev) => {
+        const merged = new Map(prev);
+        for (const [k, v] of newConflicts) merged.set(k, v);
+        return merged;
+      });
+    }
+    if (data.scopeVersion !== undefined) setLastVersion(data.scopeVersion ?? null);
+
+    // Sidebar notifications
     const hasTags = updatedBlocks.some((b) => /#[^\s#]+/.test(b.content));
     const hasActions = updatedBlocks.some((b) => /^!(action|done)(@\S+)?\s/i.test(b.content));
     if (hasTags) window.dispatchEvent(new Event("tags-changed"));
     if (hasActions) window.dispatchEvent(new Event("actions-changed"));
-  }, [viewMode, selectedDate, selectedPageId, selectedMeetingId]);
+  }, [viewMode, selectedDate, selectedPageId, selectedMeetingId, blockConflicts]);
 
   const debouncedSave = useCallback((updatedBlocks: Block[]) => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => saveBlocks(updatedBlocks), 800);
   }, [saveBlocks]);
+  // Keep the ref in sync so conflict resolvers (defined above) can call
+  // through to the latest closure without a circular dependency.
+  debouncedSaveRef.current = debouncedSave;
 
   const refSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const debouncedRefSave = useCallback((block: Block) => {
@@ -1559,6 +1802,15 @@ function BlockEditorInner({
           <div className="rounded-lg border border-gray-200 bg-white p-3">
             {blocks.map((block, i) => (
               <React.Fragment key={block.id}>
+                {blockConflicts.has(block.id) && (
+                  <ConflictBanner
+                    conflict={blockConflicts.get(block.id)!}
+                    indentPx={block.indent_level * 24}
+                    onKeepLocal={() => resolveConflictKeepLocal(block.id)}
+                    onTakeServer={() => resolveConflictTakeServer(block.id)}
+                    onKeepBoth={() => resolveConflictKeepBoth(block.id)}
+                  />
+                )}
                 <BlockLine {...blockLineProps(block, i)} />
                 {aiGenerating === block.id && (
                   <div className="flex items-center gap-2 py-2 px-3 text-sm text-theme-500" style={{ paddingLeft: `${block.indent_level * 24 + 12}px` }}>
@@ -1660,6 +1912,15 @@ function BlockEditorInner({
           <div className="rounded-lg border border-gray-200 bg-white p-3">
             {blocks.map((block, i) => (
               <React.Fragment key={block.id}>
+                {blockConflicts.has(block.id) && (
+                  <ConflictBanner
+                    conflict={blockConflicts.get(block.id)!}
+                    indentPx={block.indent_level * 24}
+                    onKeepLocal={() => resolveConflictKeepLocal(block.id)}
+                    onTakeServer={() => resolveConflictTakeServer(block.id)}
+                    onKeepBoth={() => resolveConflictKeepBoth(block.id)}
+                  />
+                )}
                 <BlockLine {...blockLineProps(block, i)} />
                 {aiGenerating === block.id && (
                   <div className="flex items-center gap-2 py-2 px-3 text-sm text-theme-500" style={{ paddingLeft: `${block.indent_level * 24 + 12}px` }}>
@@ -1736,6 +1997,50 @@ function BlockEditorInner({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Inline conflict resolution card. Renders above a block when its
+ * blockConflicts entry is set. Three explicit choices, no auto-resolution.
+ */
+function ConflictBanner({
+  conflict, indentPx, onKeepLocal, onTakeServer, onKeepBoth,
+}: {
+  conflict: BlockConflict;
+  indentPx: number;
+  onKeepLocal: () => void;
+  onTakeServer: () => void;
+  onKeepBoth: () => void;
+}) {
+  return (
+    <div className="my-1 rounded border border-amber-300 bg-amber-50 p-2 text-xs" style={{ marginLeft: indentPx }}>
+      <div className="mb-1.5 flex items-center gap-1.5 font-semibold text-amber-800">
+        <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+        </svg>
+        このブロックは別の端末でも変更されています
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+        <div className="rounded border border-blue-200 bg-blue-50 p-1.5">
+          <div className="text-[10px] font-medium text-blue-700 mb-0.5">あなたの内容</div>
+          <div className="text-[11px] text-gray-800 whitespace-pre-wrap break-words max-h-24 overflow-y-auto">
+            {conflict.localContent || <span className="text-gray-400">（空）</span>}
+          </div>
+        </div>
+        <div className="rounded border border-gray-300 bg-white p-1.5">
+          <div className="text-[10px] font-medium text-gray-600 mb-0.5">別端末の内容（v{conflict.serverVersion}）</div>
+          <div className="text-[11px] text-gray-800 whitespace-pre-wrap break-words max-h-24 overflow-y-auto">
+            {conflict.serverContent || <span className="text-gray-400">（空）</span>}
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        <button onClick={onKeepLocal} className="rounded bg-blue-500 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-blue-600">自分の内容を残す</button>
+        <button onClick={onTakeServer} className="rounded bg-gray-700 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-gray-800">別端末の内容にする</button>
+        <button onClick={onKeepBoth} className="rounded border border-amber-400 bg-white px-2.5 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-50">両方残す（新規ブロック）</button>
+      </div>
     </div>
   );
 }
