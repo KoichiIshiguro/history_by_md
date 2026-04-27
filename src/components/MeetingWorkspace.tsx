@@ -63,6 +63,7 @@ export default function MeetingWorkspace({
   // Preview state (for ready meetings)
   const [polished, setPolished] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [rePolishing, setRePolishing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editDate, setEditDate] = useState(todayStr());
   const [editAttendees, setEditAttendees] = useState<string[]>([]);
@@ -228,6 +229,30 @@ export default function MeetingWorkspace({
     }
   };
 
+  const rePolish = async () => {
+    if (!selectedMeetingId) return;
+    setRePolishing(true);
+    try {
+      const res = await fetch("/api/meetings/polish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingId: selectedMeetingId, removeFillers }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(`再清書エラー: ${j.error || res.status}`);
+        return;
+      }
+      const d = (await res.json()) as { polishedTranscript: string };
+      setPolished(d.polishedTranscript);
+      await loadDetail(selectedMeetingId, { silent: true });
+    } catch (err) {
+      alert(`再清書エラー: ${(err as Error).message}`);
+    } finally {
+      setRePolishing(false);
+    }
+  };
+
   const deleteMeeting = async () => {
     if (!selectedMeetingId) return;
     if (!confirm("この会議録を削除しますか？")) return;
@@ -354,11 +379,23 @@ export default function MeetingWorkspace({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button onClick={deleteMeeting} className="text-xs text-red-500 hover:text-red-700 hover:underline">
             削除
           </button>
-          <button onClick={commitApprove} disabled={saving}
+          <label className="flex items-center gap-1 text-xs text-gray-600 select-none ml-3">
+            <input type="checkbox" checked={removeFillers} onChange={(e) => setRemoveFillers(e.target.checked)} className="rounded border-gray-300" />
+            フィラー除去
+          </label>
+          <button
+            onClick={rePolish}
+            disabled={rePolishing || saving}
+            className="text-xs rounded border border-gray-300 bg-white px-2.5 py-1 hover:bg-gray-50 disabled:opacity-50"
+            title="現在の設定で AI に清書し直させる"
+          >
+            {rePolishing ? "清書し直し中..." : "AIで清書し直し"}
+          </button>
+          <button onClick={commitApprove} disabled={saving || rePolishing}
             className="ml-auto rounded bg-theme-500 text-white px-6 py-2 text-sm font-medium hover:bg-theme-600 disabled:opacity-50">
             {saving ? "保存中..." : "承認して会議録ページにする"}
           </button>
