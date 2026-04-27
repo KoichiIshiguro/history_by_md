@@ -1,4 +1,4 @@
-import { auth } from "@/lib/auth";
+import { auth, demoLoginEmails } from "@/lib/auth";
 import LandingPage from "@/components/LandingPage";
 import MainAppLoader from "@/components/MainAppLoader";
 
@@ -6,7 +6,12 @@ export default async function Home() {
   const session = await auth();
 
   if (!session?.user) {
-    return <LandingPage isDev={process.env.NODE_ENV === "development"} />;
+    return (
+      <LandingPage
+        isDev={process.env.NODE_ENV === "development"}
+        demoEmails={demoLoginEmails}
+      />
+    );
   }
 
   const user = session.user as any;

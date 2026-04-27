@@ -1,8 +1,26 @@
 "use client";
 
 import { signIn } from "next-auth/react";
+import { useState } from "react";
 
-export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
+export default function LandingPage({ isDev = false, demoEmails = [] }: { isDev?: boolean; demoEmails?: string[] }) {
+  const [demoBusy, setDemoBusy] = useState<string | null>(null);
+  const [demoPassword, setDemoPassword] = useState("");
+  const [demoError, setDemoError] = useState<string | null>(null);
+
+  const doDemoLogin = async (email: string) => {
+    if (!demoPassword) { setDemoError("パスワードを入力してください"); return; }
+    setDemoBusy(email); setDemoError(null);
+    const res = await signIn("demo", {
+      email, password: demoPassword, redirect: false, callbackUrl: "/",
+    });
+    setDemoBusy(null);
+    if (res?.error) {
+      setDemoError("メールまたはパスワードが正しくありません");
+    } else if (res?.url) {
+      window.location.href = res.url;
+    }
+  };
   return (
     <div className="min-h-screen bg-white">
       {/* Hero */}
@@ -42,6 +60,37 @@ export default function LandingPage({ isDev = false }: { isDev?: boolean }) {
                   </button>
                 )}
               </div>
+              {/* Demo login — enabled when DEMO_LOGIN_EMAILS + DEMO_LOGIN_PASSWORD are set in env */}
+              {demoEmails.length > 0 && (
+                <div className="mt-5 rounded-lg border border-dashed border-gray-300 bg-white/70 p-3 max-w-md">
+                  <div className="text-xs font-medium text-gray-600 mb-2">デモアカウントでログイン</div>
+                  <input
+                    type="password"
+                    value={demoPassword}
+                    onChange={(e) => setDemoPassword(e.target.value)}
+                    placeholder="パスワード"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-theme-400 mb-2"
+                    autoComplete="current-password"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {demoEmails.map((email) => (
+                      <button
+                        key={email}
+                        onClick={() => doDemoLogin(email)}
+                        disabled={demoBusy !== null}
+                        className="rounded-md bg-gray-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-900 disabled:opacity-60"
+                        title={email}
+                      >
+                        {demoBusy === email ? "..." : email}
+                      </button>
+                    ))}
+                  </div>
+                  {demoError && <div className="mt-1.5 text-xs text-red-500">{demoError}</div>}
+                  <div className="mt-1.5 text-[10px] text-gray-400">
+                    クリックでログイン・パスワードは運営から共有
+                  </div>
+                </div>
+              )}
             </div>
             {/* Hero illustration */}
             <div className="mt-12 md:mt-0 flex-shrink-0">

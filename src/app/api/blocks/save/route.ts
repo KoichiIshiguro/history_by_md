@@ -105,17 +105,22 @@ export async function POST(request: NextRequest) {
     }>;
   };
 
-  // Version check (only when client provides expectedVersion)
-  if (expectedVersion !== undefined && expectedVersion !== null) {
-    const scope = meetingId
-      ? { user_id: user.id, meeting_id: meetingId }
-      : pageId
-        ? { user_id: user.id, page_id: pageId }
-        : { user_id: user.id, date: date || "" };
-    const currentVersion = scopeVersion(db, scope);
-    // If the scope has blocks and their version doesn't match, reject.
-    // (Empty scope with null version is acceptable — no prior state to conflict with.)
-    if (currentVersion && currentVersion !== expectedVersion) {
+  // Version check.
+  //
+  // CRITICAL safety: if the scope already has blocks on the server but the
+  // client sent `expectedVersion=null`, that's a stale-tab save (the
+  // client never fetched current state) and would silently wipe everything
+  // under the legacy DELETE+INSERT model. We reject those too — not just
+  // mismatched non-null versions.
+  const scope = meetingId
+    ? { user_id: user.id, meeting_id: meetingId }
+    : pageId
+      ? { user_id: user.id, page_id: pageId }
+      : { user_id: user.id, date: date || "" };
+  const currentVersion = scopeVersion(db, scope);
+  if (currentVersion) {
+    // Scope is non-empty on the server. Client must echo the version it saw.
+    if (expectedVersion === undefined || expectedVersion === null || expectedVersion !== currentVersion) {
       return Response.json({
         code: "VERSION_CONFLICT",
         error: "他のデバイスでこのページが更新されています",
@@ -123,6 +128,7 @@ export async function POST(request: NextRequest) {
       }, { status: 409 });
     }
   }
+  // Scope is empty on the server: any save is fine (no prior data to lose).
 
   // Normalize action date specs in content upfront so storage always holds
   // the full `@YYYY/MM/DD-YYYY/MM/DD` form. This freezes the year against
@@ -171,6 +177,32 @@ export async function POST(request: NextRequest) {
     }
   };
 
+  /**
+   * Preserve per-block version counter across the DELETE+INSERT rewrite.
+   * Without this every save resets every block's version back to 1, which
+   * makes the optimistic-concurrency token (MAX(version)) unable to detect
+   * any conflict beyond the very first one. We snapshot {id -> version}
+   * before delete and re-stamp after insert so version is monotonic across
+   * saves for blocks that survive (and effectively bumped, since we'll set
+   * it to old+1).
+   */
+  const versionRows: Array<{ id: string; version: number }> = incomingBlockIds.size > 0
+    ? (db.prepare(
+        `SELECT id, version FROM blocks
+          WHERE user_id = ?
+            AND id IN (${Array.from(incomingBlockIds).map(() => "?").join(",")})`
+      ).all(user.id, ...Array.from(incomingBlockIds)) as any[])
+    : [];
+  const versionMap = new Map<string, number>(versionRows.map((r) => [r.id, r.version]));
+  const stampVersionStmt = db.prepare("UPDATE blocks SET version = ? WHERE id = ? AND user_id = ?");
+  const restampVersions = (idList: string[]) => {
+    for (const id of idList) {
+      const prev = versionMap.get(id);
+      // Surviving block: prev+1. New block: stays at default 1 (skip).
+      if (prev != null) stampVersionStmt.run(prev + 1, id, user.id);
+    }
+  };
+
   if (meetingId) {
     // Meeting content save — blocks belong to a meeting (not a page)
     const saveTransaction = db.transaction(() => {
@@ -205,7 +237,7 @@ export async function POST(request: NextRequest) {
         }
       }
       db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
-      restorePreservedSlots();
+      restorePreservedSlots(); restampVersions(Array.from(incomingBlockIds));
     });
     saveTransaction();
     const newVersion = scopeVersion(db, { user_id: user.id, meeting_id: meetingId });
@@ -248,7 +280,7 @@ export async function POST(request: NextRequest) {
       }
       // Clean up orphaned tags (no block references)
       db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
-      restorePreservedSlots();
+      restorePreservedSlots(); restampVersions(Array.from(incomingBlockIds));
     });
     saveTransaction();
     const newVersion = scopeVersion(db, { user_id: user.id, page_id: pageId });
@@ -290,7 +322,7 @@ export async function POST(request: NextRequest) {
     }
     // Clean up orphaned tags (no block references)
     db.prepare("DELETE FROM tags WHERE user_id = ? AND id NOT IN (SELECT DISTINCT tag_id FROM block_tags)").run(user.id);
-    restorePreservedSlots();
+    restorePreservedSlots(); restampVersions(Array.from(incomingBlockIds));
   });
   saveTransaction();
   const newVersion = scopeVersion(db, { user_id: user.id, date: date || "" });

@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
         }
         insertAfterSort = todaysBlocks[lastChildIdx].sort_order;
         // Shift sort_order of blocks after insertAfterSort by +1
-        db.prepare(`UPDATE blocks SET sort_order = sort_order + 1 WHERE user_id = ? AND date = ? AND page_id IS NULL AND sort_order > ?`)
+        db.prepare(`UPDATE blocks SET sort_order = sort_order + 1, version = version + 1, updated_at = datetime('now') WHERE user_id = ? AND date = ? AND page_id IS NULL AND sort_order > ?`)
           .run(user.id, today, insertAfterSort);
       } else {
         // Insert new {{page}} parent at end, then action as child

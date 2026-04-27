@@ -13,6 +13,7 @@ const providers: any[] = [
 if (process.env.NODE_ENV === "development") {
   providers.push(
     Credentials({
+      id: "credentials",
       name: "Dev Login",
       credentials: {},
       async authorize() {
@@ -21,6 +22,57 @@ if (process.env.NODE_ENV === "development") {
     })
   );
 }
+
+/**
+ * Demo login — one-click email pick + shared password.
+ *
+ * Enabled in any env (including production) when both env vars are set:
+ *   - DEMO_LOGIN_EMAILS    comma-separated allow-list of seeded demo emails
+ *   - DEMO_LOGIN_PASSWORD  shared password required for any demo sign-in
+ *
+ * UX matches the Dev Login: presenter clicks a button (no email typing),
+ * but a password gate keeps random visitors out. Each entered email must
+ * be in the whitelist AND exist in the `users` table (seeded via
+ * `npm run seed:demo`).
+ */
+const demoEmails = (process.env.DEMO_LOGIN_EMAILS || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+const demoPassword = process.env.DEMO_LOGIN_PASSWORD || "";
+
+if (demoEmails.length > 0 && demoPassword) {
+  providers.push(
+    Credentials({
+      id: "demo",
+      name: "Demo Login",
+      credentials: {
+        email: { label: "Demo Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(creds) {
+        const email = String(creds?.email || "").trim().toLowerCase();
+        const pw = String(creds?.password || "");
+        if (!email || !demoEmails.includes(email)) return null;
+        // Constant-time comparison would be ideal, but the password is
+        // operator-supplied and not user-derived, so the timing leak is
+        // negligible. Use straight string equality.
+        if (pw !== demoPassword) return null;
+        const db = getDb();
+        const row = db
+          .prepare("SELECT id, email, name, image FROM users WHERE lower(email) = ?")
+          .get(email) as { id: string; email: string; name: string | null; image: string | null } | undefined;
+        if (!row) return null; // must be pre-seeded
+        return { id: row.id, email: row.email, name: row.name ?? "Demo", image: row.image };
+      },
+    })
+  );
+}
+
+export const demoLoginEnabled = demoEmails.length > 0 && Boolean(demoPassword);
+/** Whitelisted demo emails — exposed so the landing page can render a
+ *  one-click button per account (no manual email typing). */
+export const demoLoginEmails: string[] = demoLoginEnabled ? demoEmails : [];
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers,
