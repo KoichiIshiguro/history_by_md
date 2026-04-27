@@ -4,6 +4,7 @@ import { compressAudioToOpus } from "@/lib/audioCompress";
 import { saveAudio } from "@/lib/audioStorage";
 import { uploadAudioFile, geminiAudioPolish, buildAudioFirstPrompt } from "@/lib/geminiAudio";
 import { logUsage, groqWhisperCost, geminiCost } from "@/lib/usageLog";
+import { serverLog } from "@/lib/serverLog";
 import { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
@@ -92,6 +93,9 @@ export async function POST(request: NextRequest) {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    await serverLog("error", "transcribe.upload.compress_failed", {
+      userId: user.id, fileName: file.name, fileSize: file.size,
+    }, err);
     return Response.json({ error: `音声処理エラー: ${message}` }, { status: 500 });
   }
 
@@ -127,8 +131,11 @@ export async function POST(request: NextRequest) {
     language, attendees, removeFillers, title,
     fileName: file.name, groqKey, geminiKey,
   };
-  runBackgroundPipeline(backgroundArgs).catch((err) => {
+  runBackgroundPipeline(backgroundArgs).catch(async (err) => {
     console.error(`[meetings/transcribe] background error for ${meetingId}:`, err);
+    await serverLog("error", "transcribe.background.unhandled", {
+      meetingId, userId: user.id, fileName: file.name,
+    }, err);
   });
 
   // Return immediately — the browser can close now
@@ -173,7 +180,13 @@ async function runBackgroundPipeline(args: {
       body: groqForm,
     });
     if (!whisperRes.ok) {
-      throw new Error(`Groq Whisper error ${whisperRes.status}: ${(await whisperRes.text()).slice(0, 500)}`);
+      const body = (await whisperRes.text()).slice(0, 1000);
+      await serverLog("error", "transcribe.whisper.http_error", {
+        meetingId: args.meetingId, userId: args.userId, status: whisperRes.status,
+        biasBytes: bias ? Buffer.byteLength(bias, "utf8") : 0,
+        body,
+      });
+      throw new Error(`Groq Whisper error ${whisperRes.status}: ${body.slice(0, 500)}`);
     }
     const whisperResult = (await whisperRes.json()) as { text: string; duration?: number };
     const rawTranscript = (whisperResult.text || "").trim();
@@ -208,6 +221,9 @@ async function runBackgroundPipeline(args: {
     ).run(polishedText, args.meetingId, args.userId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    await serverLog("error", "transcribe.pipeline.failed", {
+      meetingId: args.meetingId, userId: args.userId, fileName: args.fileName,
+    }, err);
     db.prepare(
       `UPDATE meetings SET status = 'error', error_message = ?, updated_at = datetime('now')
          WHERE id = ? AND user_id = ?`

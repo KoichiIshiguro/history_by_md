@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { getAudioPath } from "@/lib/audioStorage";
 import { runGeminiAudioPolish } from "../transcribe/route";
+import { serverLog } from "@/lib/serverLog";
 import { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
@@ -78,6 +79,9 @@ export async function POST(request: NextRequest) {
     return Response.json({ polishedTranscript: polished, usedAudio });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    await serverLog("error", "polish.failed", {
+      meetingId, userId: user.id, removeFillers: !!removeFillers,
+    }, err);
     db.prepare("UPDATE meetings SET status = 'error', error_message = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
       .run(message, meetingId, user.id);
     return Response.json({ error: message }, { status: 500 });
