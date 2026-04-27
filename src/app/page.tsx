@@ -1,4 +1,4 @@
-import { auth, demoLoginEnabled } from "@/lib/auth";
+import { auth, demoLoginEmails } from "@/lib/auth";
 import LandingPage from "@/components/LandingPage";
 import MainAppLoader from "@/components/MainAppLoader";
 
@@ -9,7 +9,7 @@ export default async function Home() {
     return (
       <LandingPage
         isDev={process.env.NODE_ENV === "development"}
-        demoEnabled={demoLoginEnabled}
+        demoEmails={demoLoginEmails}
       />
     );
   }
