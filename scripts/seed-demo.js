@@ -18,7 +18,7 @@ const path = require("path");
 const crypto = require("crypto");
 
 const DB_PATH = path.join(process.cwd(), "data", "weblogseq.db");
-const EMAIL = process.env.DEMO_EMAIL || "demo-sales@saltybullet.com";
+const EMAIL = process.env.DEMO_EMAIL || "demo@saltybullet.com";
 const NAME = process.env.DEMO_NAME || "営業デモ";
 
 const db = new Database(DB_PATH);

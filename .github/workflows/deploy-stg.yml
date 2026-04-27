@@ -32,6 +32,7 @@ jobs:
             package-lock.json \
             src \
             public \
+            scripts \
             next.config.ts \
             tsconfig.json \
             .env.local 2>/dev/null || true
