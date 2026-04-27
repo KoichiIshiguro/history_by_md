@@ -340,6 +340,19 @@ function BlockEditorInner({
    * next patch. Populated by fetchBlocks() and after each successful save.
    */
   const snapshotRef = useRef<Map<string, BlockSnapshot>>(new Map());
+  /**
+   * "Did the initial fetch complete for the current scope?" guard.
+   *
+   * Without this, a stale tab whose `selectedDate` flips to "today" can
+   * fire a debounced save with empty `blocks` BEFORE the fetch resolves —
+   * which (under the old bulk-save endpoint) would write [] over real
+   * server data and silently wipe everything. The new patch endpoint
+   * already won't delete blocks the client doesn't know about, but a
+   * naïve "blocks=[] + snapshot=empty" save still produces zero ops which
+   * is harmless — yet we want belt-and-suspenders here so future code
+   * paths can't accidentally regress this.
+   */
+  const snapshotLoadedRef = useRef(false);
   const [dateRefs, setDateRefs] = useState<Block[]>([]);
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
@@ -440,6 +453,7 @@ function BlockEditorInner({
         });
       });
       snapshotRef.current = snap;
+      snapshotLoadedRef.current = true;
     };
 
     try {
@@ -461,6 +475,7 @@ function BlockEditorInner({
           setDateRefs([]);
           setLastVersion(null);
           snapshotRef.current = new Map(); // tag view doesn't use patch saves
+          snapshotLoadedRef.current = true;
         } else {
           let serverBlocks: Block[] = [];
           if (Array.isArray(data)) {
@@ -488,8 +503,12 @@ function BlockEditorInner({
 
   // Clear stale per-block conflicts when the scope changes (otherwise a
   // banner from page A would surface on page B if a block id collides).
+  // Also drop the "loaded" flag so saves can't fire against the new scope
+  // until fetchBlocks confirms what's actually there.
   useEffect(() => {
     setBlockConflicts(new Map());
+    snapshotLoadedRef.current = false;
+    snapshotRef.current = new Map();
   }, [viewMode, selectedDate, selectedPageId, selectedMeetingId]);
 
   // Re-fetch blocks when actions are toggled in ActionList
@@ -581,6 +600,13 @@ function BlockEditorInner({
    * Tag view stays on per-block PUT (no scope concept there).
    */
   const saveBlocks = useCallback(async (updatedBlocks: Block[]) => {
+    // Guard: never save before the initial fetch resolves for this scope.
+    // Otherwise a stale tab that flipped to a new date can save [] and
+    // overwrite real server data. (Real-world repro: PC left open
+    // overnight, mobile edits "today", PC's `selectedDate` flips at
+    // wakeup, debounced save fires before fetch — bye, day of work.)
+    if (!snapshotLoadedRef.current) return;
+
     if (viewMode === "tag") {
       for (const block of updatedBlocks) {
         await fetch("/api/blocks", {
