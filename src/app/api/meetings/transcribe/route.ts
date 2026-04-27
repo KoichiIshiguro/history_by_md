@@ -164,7 +164,7 @@ async function runBackgroundPipeline(args: {
     groqForm.append("model", GROQ_MODEL);
     groqForm.append("language", args.language);
     groqForm.append("response_format", "verbose_json");
-    const bias = await buildVocabularyBias(db, args.userId);
+    const bias = await buildVocabularyBias(db, args.userId, { attendees: args.attendees });
     if (bias) groqForm.append("prompt", bias);
 
     const whisperRes = await fetch(GROQ_API_URL, {
@@ -216,14 +216,73 @@ async function runBackgroundPipeline(args: {
   }
 }
 
-async function buildVocabularyBias(db: any, userId: string): Promise<string> {
-  const tags = db.prepare("SELECT name FROM tags WHERE user_id = ? LIMIT 60").all(userId) as { name: string }[];
-  const pages = db.prepare("SELECT name FROM pages WHERE user_id = ? LIMIT 80").all(userId) as { name: string }[];
-  const terms = [...tags.map((t) => t.name), ...pages.map((p) => p.name)];
-  if (terms.length === 0) return "";
-  let joined = terms.join("、");
-  if (joined.length > 900) joined = joined.slice(0, 900);
-  return joined;
+/**
+ * Build the Whisper `prompt` (vocabulary bias).
+ *
+ * Groq's error message says "896 characters" but it actually counts
+ * UTF-8 bytes — a JS .length cap doesn't help. We clamp by bytes.
+ *
+ * Selection priority (high → low):
+ *   1. Attendees of THIS meeting (most likely proper nouns in the audio)
+ *   2. Tags / pages ranked by reference count desc, then recency desc
+ *   3. Skip noise (pure digits, 1-char names, duplicates)
+ *   4. If a term doesn't fit, SKIP it and try the next — one long term
+ *      shouldn't starve out a dozen shorter useful ones.
+ */
+const WHISPER_PROMPT_MAX_BYTES = 880;
+
+function isVocabNoise(name: string): boolean {
+  if (!name || name.length <= 1) return true;
+  if (/^\d+$/.test(name)) return true;
+  if (/^[\s_\-]+$/.test(name)) return true;
+  return false;
+}
+
+async function buildVocabularyBias(
+  db: any,
+  userId: string,
+  opts: { attendees?: string[] } = {},
+): Promise<string> {
+  const tagRows = db.prepare(
+    "SELECT t.name AS name, COUNT(bt.block_id) AS refs, IFNULL(MAX(b.updated_at), '') AS last " +
+    "FROM tags t LEFT JOIN block_tags bt ON bt.tag_id = t.id " +
+    "LEFT JOIN blocks b ON b.id = bt.block_id " +
+    "WHERE t.user_id = ? GROUP BY t.id ORDER BY refs DESC, last DESC LIMIT 80"
+  ).all(userId) as { name: string }[];
+
+  const pageRows = db.prepare(
+    "SELECT p.name AS name, COUNT(bp.block_id) AS refs, IFNULL(MAX(b.updated_at), p.created_at) AS last " +
+    "FROM pages p LEFT JOIN block_pages bp ON bp.page_id = p.id " +
+    "LEFT JOIN blocks b ON b.id = bp.block_id " +
+    "WHERE p.user_id = ? GROUP BY p.id ORDER BY refs DESC, last DESC LIMIT 100"
+  ).all(userId) as { name: string }[];
+
+  const ranked: string[] = [];
+  for (const a of opts.attendees || []) ranked.push(a);
+  for (const t of tagRows) ranked.push(`#${t.name}`);
+  for (const p of pageRows) ranked.push(p.name);
+
+  const seen = new Set<string>();
+  const useful = ranked.filter((n) => {
+    if (isVocabNoise(n)) return false;
+    if (seen.has(n)) return false;
+    seen.add(n);
+    return true;
+  });
+  if (useful.length === 0) return "";
+
+  const sep = "、";
+  const enc = new TextEncoder();
+  let out = "";
+  let outBytes = 0;
+  for (const term of useful) {
+    const piece = out ? sep + term : term;
+    const pb = enc.encode(piece).length;
+    if (outBytes + pb > WHISPER_PROMPT_MAX_BYTES) continue;
+    out += piece;
+    outBytes += pb;
+  }
+  return out;
 }
 
 /**
