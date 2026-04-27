@@ -130,7 +130,9 @@ export async function PUT(request: NextRequest) {
   const updateTransaction = db.transaction(() => {
     db.prepare(
       `UPDATE blocks SET content = ?, indent_level = ?, sort_order = ?,
-                         due_start = ?, due_end = ?, updated_at = datetime('now')
+                         due_start = ?, due_end = ?,
+                         version = version + 1,
+                         updated_at = datetime('now')
        WHERE id = ? AND user_id = ?`
     ).run(content, indent_level || 0, sort_order || 0, dueStart, dueEnd, id, user.id);
 

@@ -28,7 +28,7 @@ export async function PUT(request: NextRequest) {
   const newContent = rewriteActionDate(block.content, dueStart, dueEnd);
 
   db.prepare(
-    `UPDATE blocks SET content = ?, due_start = ?, due_end = ?, updated_at = datetime('now')
+    `UPDATE blocks SET content = ?, due_start = ?, due_end = ?, version = version + 1, updated_at = datetime('now')
      WHERE id = ? AND user_id = ?`
   ).run(newContent, dueStart, dueEnd, blockId, user.id);
 

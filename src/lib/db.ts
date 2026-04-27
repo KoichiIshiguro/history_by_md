@@ -133,6 +133,16 @@ function initDb(db: Database.Database) {
   }
   db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_due ON blocks(user_id, due_start, due_end)");
 
+  // Migration: per-block monotonic version counter for fine-grained concurrency.
+  // Bumped on every INSERT (=1) / UPDATE (+1). Used by the patch endpoint to
+  // detect block-level conflicts even when two saves land in the same second
+  // (which the prior `MAX(updated_at)` token would miss).
+  if (!blockColNames.includes("version")) {
+    db.exec("ALTER TABLE blocks ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
+    // Backfill: existing rows get version 1
+    db.exec("UPDATE blocks SET version = 1 WHERE version IS NULL OR version = 0");
+  }
+
   // Backfill: action/done blocks without due dates get their creation date as single-day
   db.exec(`
     UPDATE blocks

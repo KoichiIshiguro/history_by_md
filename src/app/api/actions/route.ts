@@ -139,7 +139,7 @@ export async function PUT(request: NextRequest) {
   const dueStart = meta.isAction ? meta.dueStart : null;
   const dueEnd = meta.isAction ? meta.dueEnd : null;
 
-  db.prepare("UPDATE blocks SET content = ?, due_start = ?, due_end = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
+  db.prepare("UPDATE blocks SET content = ?, due_start = ?, due_end = ?, version = version + 1, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
     .run(content, dueStart, dueEnd, blockId, user.id);
 
   return Response.json({ ok: true });
