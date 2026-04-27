@@ -218,36 +218,27 @@ async function runBackgroundPipeline(args: {
 
 /**
  * Build a comma-separated vocabulary bias string for Groq Whisper's
- * `prompt` parameter.
- *
- * IMPORTANT: Groq's error message says "896 characters or fewer", but the
- * server actually counts **UTF-8 bytes**, not characters. For Japanese
- * (3 bytes per kana/kanji) this is a ~3x difference, so a JS-length cap
- * is useless — 42 page names of Japanese easily fits in ~400 JS chars
- * but blows past 896 bytes. We clamp by byte length instead.
- *
- * Margin: 880 bytes leaves room for any URL-encoding overhead in
- * multipart form data (the actual ~896 cap appears to be on the decoded
- * string, but staying under the documented number is cheap insurance).
+ * `prompt` parameter. Groq enforces a hard 896-character cap on this
+ * field — and counts characters slightly differently than JS `.length`
+ * (we've seen JS-length 900 reported as 932 on their side, presumably a
+ * codepoint-vs-code-unit mismatch). Cap conservatively below 880 and
+ * truncate at the previous "、" so we never split a term mid-character.
  */
-const WHISPER_PROMPT_MAX_BYTES = 880;
+const WHISPER_PROMPT_MAX = 880;
 async function buildVocabularyBias(db: any, userId: string): Promise<string> {
   const tags = db.prepare("SELECT name FROM tags WHERE user_id = ? LIMIT 60").all(userId) as { name: string }[];
   const pages = db.prepare("SELECT name FROM pages WHERE user_id = ? LIMIT 80").all(userId) as { name: string }[];
   const terms = [...tags.map((t) => t.name), ...pages.map((p) => p.name)];
   if (terms.length === 0) return "";
-  // Greedily fill term-by-term, stopping before the byte cap. Truncating
-  // at "、" boundaries keeps the prompt well-formed.
+  // Greedily fill a buffer term-by-term, stopping before WHISPER_PROMPT_MAX.
+  // This avoids slice-into-the-middle-of-a-term and keeps the prompt
+  // well-formed even when the underlying counting is mismatched.
   const sep = "、";
-  const enc = new TextEncoder();
   let out = "";
-  let outBytes = 0;
   for (const term of terms) {
-    const piece = out ? sep + term : term;
-    const pieceBytes = enc.encode(piece).length;
-    if (outBytes + pieceBytes > WHISPER_PROMPT_MAX_BYTES) break;
-    out += piece;
-    outBytes += pieceBytes;
+    const next = out ? out + sep + term : term;
+    if (next.length > WHISPER_PROMPT_MAX) break;
+    out = next;
   }
   return out;
 }
