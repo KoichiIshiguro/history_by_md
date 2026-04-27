@@ -164,7 +164,7 @@ async function runBackgroundPipeline(args: {
     groqForm.append("model", GROQ_MODEL);
     groqForm.append("language", args.language);
     groqForm.append("response_format", "verbose_json");
-    const bias = await buildVocabularyBias(db, args.userId, { attendees: args.attendees });
+    const bias = await buildVocabularyBias(db, args.userId);
     if (bias) groqForm.append("prompt", bias);
 
     const whisperRes = await fetch(GROQ_API_URL, {
@@ -220,85 +220,34 @@ async function runBackgroundPipeline(args: {
  * Build a comma-separated vocabulary bias string for Groq Whisper's
  * `prompt` parameter.
  *
- * Groq says "896 characters" in errors but actually counts UTF-8 bytes
- * (Japanese ≈ 3 bytes/char), so we clamp by byte length, not JS .length.
+ * IMPORTANT: Groq's error message says "896 characters or fewer", but the
+ * server actually counts **UTF-8 bytes**, not characters. For Japanese
+ * (3 bytes per kana/kanji) this is a ~3x difference, so a JS-length cap
+ * is useless — 42 page names of Japanese easily fits in ~400 JS chars
+ * but blows past 896 bytes. We clamp by byte length instead.
  *
- * Selection strategy (high → low priority within the byte budget):
- *   1. This meeting's attendees — by far the most likely proper nouns
- *      to appear in the audio.
- *   2. Tags / pages ranked by reference count (more-used = more likely
- *      to come up) and recency (recently-touched contexts beat dormant).
- *   3. Filter noise: pure-digit names (e.g. "202604"), 1-char names,
- *      and duplicates. These either don't help bias (Whisper handles
- *      digits natively) or waste budget.
- *   4. If a term doesn't fit, SKIP it and try the next — a single long
- *      term shouldn't starve out a dozen shorter useful ones.
+ * Margin: 880 bytes leaves room for any URL-encoding overhead in
+ * multipart form data (the actual ~896 cap appears to be on the decoded
+ * string, but staying under the documented number is cheap insurance).
  */
 const WHISPER_PROMPT_MAX_BYTES = 880;
-
-function isVocabNoise(name: string): boolean {
-  if (!name || name.length <= 1) return true;
-  if (/^\d+$/.test(name)) return true;          // "202604"
-  if (/^[\s_\-]+$/.test(name)) return true;     // separators only
-  return false;
-}
-
-async function buildVocabularyBias(
-  db: any,
-  userId: string,
-  opts: { attendees?: string[] } = {},
-): Promise<string> {
-  // Tags/pages ranked by reference count desc, then recency desc.
-  const tagRows = db.prepare(`
-    SELECT t.name AS name, COUNT(bt.block_id) AS refs,
-           IFNULL(MAX(b.updated_at), '') AS last
-      FROM tags t
-      LEFT JOIN block_tags bt ON bt.tag_id = t.id
-      LEFT JOIN blocks b      ON b.id = bt.block_id
-     WHERE t.user_id = ?
-     GROUP BY t.id
-     ORDER BY refs DESC, last DESC
-     LIMIT 80
-  `).all(userId) as { name: string }[];
-
-  const pageRows = db.prepare(`
-    SELECT p.name AS name, COUNT(bp.block_id) AS refs,
-           IFNULL(MAX(b.updated_at), p.created_at) AS last
-      FROM pages p
-      LEFT JOIN block_pages bp ON bp.page_id = p.id
-      LEFT JOIN blocks b       ON b.id = bp.block_id
-     WHERE p.user_id = ?
-     GROUP BY p.id
-     ORDER BY refs DESC, last DESC
-     LIMIT 100
-  `).all(userId) as { name: string }[];
-
-  // Priority order: attendees first, then ranked tags & pages interleaved.
-  // (Tags carry "#" so Whisper's prompt knows they're hashtags.)
-  const ranked: string[] = [];
-  for (const a of opts.attendees || []) ranked.push(a);
-  for (const t of tagRows) ranked.push(`#${t.name}`);
-  for (const p of pageRows) ranked.push(p.name);
-
-  const seen = new Set<string>();
-  const useful = ranked.filter((n) => {
-    if (isVocabNoise(n)) return false;
-    if (seen.has(n)) return false;
-    seen.add(n);
-    return true;
-  });
-  if (useful.length === 0) return "";
-
+async function buildVocabularyBias(db: any, userId: string): Promise<string> {
+  const tags = db.prepare("SELECT name FROM tags WHERE user_id = ? LIMIT 60").all(userId) as { name: string }[];
+  const pages = db.prepare("SELECT name FROM pages WHERE user_id = ? LIMIT 80").all(userId) as { name: string }[];
+  const terms = [...tags.map((t) => t.name), ...pages.map((p) => p.name)];
+  if (terms.length === 0) return "";
+  // Greedily fill term-by-term, stopping before the byte cap. Truncating
+  // at "、" boundaries keeps the prompt well-formed.
   const sep = "、";
   const enc = new TextEncoder();
   let out = "";
   let outBytes = 0;
-  for (const term of useful) {
+  for (const term of terms) {
     const piece = out ? sep + term : term;
-    const pb = enc.encode(piece).length;
-    if (outBytes + pb > WHISPER_PROMPT_MAX_BYTES) continue; // skip, try next
+    const pieceBytes = enc.encode(piece).length;
+    if (outBytes + pieceBytes > WHISPER_PROMPT_MAX_BYTES) break;
     out += piece;
-    outBytes += pb;
+    outBytes += pieceBytes;
   }
   return out;
 }
