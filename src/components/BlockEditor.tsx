@@ -968,7 +968,15 @@ function BlockEditorInner({
     }
     setEditingBlockId(block.id); setEditContent(block.content); setShowSuggestions(false);
     editStartedAtRef.current = Date.now();
-    setTimeout(() => { inputRefs.current.get(block.id)?.focus(); }, 0);
+    // Focus + place caret at end of content (default browser behavior puts
+    // it at index 0, which surprises everyone — they expect to keep typing).
+    setTimeout(() => {
+      const el = inputRefs.current.get(block.id);
+      if (!el) return;
+      el.focus();
+      const len = el.value.length;
+      el.selectionStart = el.selectionEnd = len;
+    }, 0);
   };
 
   const finishEditing = useCallback(() => {
