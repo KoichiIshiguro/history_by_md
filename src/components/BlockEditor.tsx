@@ -11,7 +11,7 @@ import {
   DragStartEvent, DragEndEvent,
 } from "@dnd-kit/core";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
-import { normalizeActionDate, todayISO } from "@/lib/actionDate";
+import { normalizeActionDate, expandActionShorthand, todayISO } from "@/lib/actionDate";
 
 // Load mermaid dynamically from CDN to avoid 291MB npm dependency
 let mermaidLoaded = false;
@@ -170,8 +170,8 @@ export function preprocessCustomSyntax(content: string, allPages: PageInfo[], al
     }
     return `${dot} `;
   };
-  result = result.replace(/^!(action|done)(?:@(\S+))?\s/i, (_m, kind: string, spec?: string) =>
-    renderActionPrefix(kind.toLowerCase() as "action" | "done", spec)
+  result = result.replace(/^(?:!(action|done)|=~)(?:@(\S+))?\s/i, (_m, kind: string | undefined, spec?: string) =>
+    renderActionPrefix((kind?.toLowerCase() ?? "action") as "action" | "done", spec)
   );
 
   // #tag → HTML span (but not inside code blocks or HTML tags)
@@ -932,6 +932,11 @@ function BlockEditorInner({
     }
   };
 
+  const commitContent = useCallback((content: string): string => {
+    const defaultDate = viewMode === "date" ? (selectedDate || todayISO()) : todayISO();
+    return normalizeActionDate(expandActionShorthand(content), defaultDate);
+  }, [viewMode, selectedDate]);
+
   const focusBlock = (blockId: string, cursorPos?: number) => {
     setEditingBlockId(blockId);
     const block = blocks.find((b) => b.id === blockId);
@@ -951,17 +956,18 @@ function BlockEditorInner({
     if (!currentEditingId || currentEditingId !== block.id) pushUndo();
     // Save current editing block before switching (use refs for latest values)
     if (currentEditingId && currentEditingId !== block.id) {
+      const committed = commitContent(currentContent);
       const currentPageRefs = pageRefsRef.current;
       const currentDateRefs = dateRefsRef.current;
       const currentBlocks = blocksRef.current;
       const refBlock = [...currentPageRefs, ...currentDateRefs].find((b) => b.id === currentEditingId);
       if (refBlock) {
-        const updated = { ...refBlock, content: currentContent };
+        const updated = { ...refBlock, content: committed };
         setPageRefs(currentPageRefs.map((b) => b.id === currentEditingId ? updated : b));
         setDateRefs(currentDateRefs.map((b) => b.id === currentEditingId ? updated : b));
         debouncedRefSave(updated);
       } else {
-        const updated = currentBlocks.map((b) => b.id === currentEditingId ? { ...b, content: currentContent } : b);
+        const updated = currentBlocks.map((b) => b.id === currentEditingId ? { ...b, content: committed } : b);
         setBlocks(updated);
         debouncedSave(updated);
       }
@@ -995,12 +1001,7 @@ function BlockEditorInner({
       setEditingBlockId(null); setShowSuggestions(false);
       return;
     }
-    // Normalize any !action / !done date spec eagerly so the user sees
-    // "@2026/04/03-2026/04/03" immediately after blur/Enter (not just in
-    // the DB). Year-locking is safer the earlier it happens.
-    const defaultDate =
-      viewMode === "date" ? (selectedDate || todayISO()) : todayISO();
-    const normalizedContent = normalizeActionDate(currentContent, defaultDate);
+    const normalizedContent = commitContent(currentContent);
     if (normalizedContent !== currentContent) {
       setEditContent(normalizedContent);
     }
@@ -1018,7 +1019,7 @@ function BlockEditorInner({
     setBlocks(updated);
     debouncedSave(updated);
     setEditingBlockId(null); setShowSuggestions(false);
-  }, [aiGenerating, aiResult, debouncedSave, debouncedRefSave, viewMode, selectedDate]);
+  }, [aiGenerating, aiResult, debouncedSave, debouncedRefSave, commitContent]);
 
   const handleContentChange = (value: string) => {
     // Strip newlines unless Shift is held (Shift+Enter = intentional newline)
@@ -1248,10 +1249,7 @@ function BlockEditorInner({
       pushUndo();
       const before = editContent.slice(0, cursorPos);
       const after = editContent.slice(cursorPos);
-      // Normalize !action/!done date spec on the block that's being "closed"
-      // by this Enter. Makes "@4/3" become "@2026/04/03-2026/04/03" immediately.
-      const defaultDate = viewMode === "date" ? (selectedDate || todayISO()) : todayISO();
-      const beforeNorm = normalizeActionDate(before, defaultDate);
+      const beforeNorm = commitContent(before);
       const updated = blocks.map((b) => b.id === block.id ? { ...b, content: beforeNorm } : b);
       const newBlock: Block = { id: crypto.randomUUID(), content: after, indent_level: block.indent_level, sort_order: block.sort_order + 1, date: block.date };
       updated.splice(blockIndex + 1, 0, newBlock);
@@ -1262,21 +1260,23 @@ function BlockEditorInner({
     } else if (e.key === "Tab") {
       e.preventDefault();
       pushUndo();
+      const committed = commitContent(editContent);
       const newIndent = e.shiftKey ? Math.max(0, block.indent_level - 1) : block.indent_level + 1;
-      const updated = blocks.map((b) => b.id === block.id ? { ...b, indent_level: newIndent, content: editContent } : b);
+      const updated = blocks.map((b) => b.id === block.id ? { ...b, indent_level: newIndent, content: committed } : b);
       setBlocks(updated); debouncedSave(updated);
+      if (committed !== editContent) setEditContent(committed);
     } else if (e.key === "ArrowUp" && cursorPos === 0) {
       e.preventDefault();
-      if (blockIndex > 0) { const prev = blocks[blockIndex - 1]; setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(prev.id, prev.content.length); }
+      if (blockIndex > 0) { const prev = blocks[blockIndex - 1]; const c = commitContent(editContent); setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: c } : b)); debouncedSave(blocks.map((b) => b.id === block.id ? { ...b, content: c } : b)); focusBlock(prev.id, prev.content.length); }
     } else if (e.key === "ArrowDown" && cursorPos === editContent.length) {
       e.preventDefault();
-      if (blockIndex < blocks.length - 1) { const next = blocks[blockIndex + 1]; setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(next.id, 0); }
+      if (blockIndex < blocks.length - 1) { const next = blocks[blockIndex + 1]; const c = commitContent(editContent); setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: c } : b)); debouncedSave(blocks.map((b) => b.id === block.id ? { ...b, content: c } : b)); focusBlock(next.id, 0); }
     } else if (e.key === "ArrowLeft" && cursorPos === 0 && blockIndex > 0) {
-      e.preventDefault(); const prev = blocks[blockIndex - 1];
-      setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(prev.id, prev.content.length);
+      e.preventDefault(); const prev = blocks[blockIndex - 1]; const c = commitContent(editContent);
+      setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: c } : b)); debouncedSave(blocks.map((b) => b.id === block.id ? { ...b, content: c } : b)); focusBlock(prev.id, prev.content.length);
     } else if (e.key === "ArrowRight" && cursorPos === editContent.length && blockIndex < blocks.length - 1) {
-      e.preventDefault(); const next = blocks[blockIndex + 1];
-      setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(next.id, 0);
+      e.preventDefault(); const next = blocks[blockIndex + 1]; const c = commitContent(editContent);
+      setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: c } : b)); debouncedSave(blocks.map((b) => b.id === block.id ? { ...b, content: c } : b)); focusBlock(next.id, 0);
     } else if (e.key === "Backspace" && cursorPos === 0 && (textarea.selectionEnd ?? 0) === 0 && blockIndex > 0) {
       e.preventDefault();
       pushUndo();
@@ -1363,8 +1363,7 @@ function BlockEditorInner({
       e.preventDefault();
       const before = editContent.slice(0, cursorPos);
       const after = editContent.slice(cursorPos);
-      const defaultDate = viewMode === "date" ? (selectedDate || todayISO()) : todayISO();
-      const beforeNorm = normalizeActionDate(before, defaultDate);
+      const beforeNorm = commitContent(before);
       const updatedBlock = { ...block, content: beforeNorm };
       const newBlock: Block = {
         id: crypto.randomUUID(), content: after, indent_level: block.indent_level,
@@ -1384,22 +1383,24 @@ function BlockEditorInner({
       });
     } else if (e.key === "Tab") {
       e.preventDefault();
+      const committed = commitContent(editContent);
       const newIndent = e.shiftKey ? Math.max(0, block.indent_level - 1) : block.indent_level + 1;
-      const updated = { ...block, indent_level: newIndent, content: editContent };
+      const updated = { ...block, indent_level: newIndent, content: committed };
       setRefList(refList.map((b) => b.id === block.id ? updated : b));
       debouncedRefSave(updated);
+      if (committed !== editContent) setEditContent(committed);
     } else if (e.key === "ArrowUp" && cursorPos === 0) {
       e.preventDefault();
-      if (blockIndex > 0) { const prev = refList[blockIndex - 1]; setRefList(refList.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(prev.id, prev.content.length); }
+      if (blockIndex > 0) { const prev = refList[blockIndex - 1]; const c = commitContent(editContent); setRefList(refList.map((b) => b.id === block.id ? { ...b, content: c } : b)); debouncedRefSave({ ...block, content: c }); focusBlock(prev.id, prev.content.length); }
     } else if (e.key === "ArrowDown" && cursorPos === editContent.length) {
       e.preventDefault();
-      if (blockIndex < refList.length - 1) { const next = refList[blockIndex + 1]; setRefList(refList.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(next.id, 0); }
+      if (blockIndex < refList.length - 1) { const next = refList[blockIndex + 1]; const c = commitContent(editContent); setRefList(refList.map((b) => b.id === block.id ? { ...b, content: c } : b)); debouncedRefSave({ ...block, content: c }); focusBlock(next.id, 0); }
     } else if (e.key === "ArrowLeft" && cursorPos === 0 && blockIndex > 0) {
-      e.preventDefault(); const prev = refList[blockIndex - 1];
-      setRefList(refList.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(prev.id, prev.content.length);
+      e.preventDefault(); const prev = refList[blockIndex - 1]; const c = commitContent(editContent);
+      setRefList(refList.map((b) => b.id === block.id ? { ...b, content: c } : b)); debouncedRefSave({ ...block, content: c }); focusBlock(prev.id, prev.content.length);
     } else if (e.key === "ArrowRight" && cursorPos === editContent.length && blockIndex < refList.length - 1) {
-      e.preventDefault(); const next = refList[blockIndex + 1];
-      setRefList(refList.map((b) => b.id === block.id ? { ...b, content: editContent } : b)); focusBlock(next.id, 0);
+      e.preventDefault(); const next = refList[blockIndex + 1]; const c = commitContent(editContent);
+      setRefList(refList.map((b) => b.id === block.id ? { ...b, content: c } : b)); debouncedRefSave({ ...block, content: c }); focusBlock(next.id, 0);
     } else if (e.key === "Backspace" && cursorPos === 0 && (textarea.selectionEnd ?? 0) === 0 && blockIndex > 0) {
       e.preventDefault();
       const prev = refList[blockIndex - 1];

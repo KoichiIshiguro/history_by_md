@@ -161,39 +161,89 @@ async function runBackgroundPipeline(args: {
 }) {
   const db = getDb();
   try {
-    // 1. Whisper (Groq)
+    // 1. Whisper (Groq) — with retry + fallback ladder.
+    //
+    // Groq's whisper-large-v3-turbo has a known intermittent 500 issue
+    // (see community.groq.com forum thread on /audio/transcriptions
+    // 500s, frequently correlated with the `prompt` parameter). We wrap
+    // the call in a 4-step ladder:
+    //   1. turbo + prompt (normal path)
+    //   2. retry with backoff for transient 5xx
+    //   3. drop the prompt and retry on turbo (avoid the prompt-bug)
+    //   4. fall back to whisper-large-v3 (non-turbo) without prompt
+    // Only after all four fail do we mark the meeting as error.
     const { readFile } = await import("fs/promises");
     const audioBytes = await readFile(args.audioPath);
-    const uploadBlob = new Blob([new Uint8Array(audioBytes)], { type: args.compressedMime });
-
-    const groqForm = new FormData();
-    groqForm.append("file", uploadBlob, `${args.meetingId}.opus`);
-    groqForm.append("model", GROQ_MODEL);
-    groqForm.append("language", args.language);
-    groqForm.append("response_format", "verbose_json");
     const bias = await buildVocabularyBias(db, args.userId, { attendees: args.attendees });
-    if (bias) groqForm.append("prompt", bias);
 
-    const whisperRes = await fetch(GROQ_API_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${args.groqKey}` },
-      body: groqForm,
-    });
-    if (!whisperRes.ok) {
-      const body = (await whisperRes.text()).slice(0, 1000);
-      await serverLog("error", "transcribe.whisper.http_error", {
-        meetingId: args.meetingId, userId: args.userId, status: whisperRes.status,
-        biasBytes: bias ? Buffer.byteLength(bias, "utf8") : 0,
-        body,
+    const buildForm = (model: string, includeBias: boolean) => {
+      const f = new FormData();
+      f.append("file", new Blob([new Uint8Array(audioBytes)], { type: args.compressedMime }), `${args.meetingId}.opus`);
+      f.append("model", model);
+      f.append("language", args.language);
+      f.append("response_format", "verbose_json");
+      if (includeBias && bias) f.append("prompt", bias);
+      return f;
+    };
+
+    const callGroq = async (model: string, includeBias: boolean) =>
+      fetch(GROQ_API_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${args.groqKey}` },
+        body: buildForm(model, includeBias),
       });
-      throw new Error(`Groq Whisper error ${whisperRes.status}: ${body.slice(0, 500)}`);
+
+    type Attempt = { model: string; includeBias: boolean; backoffMs: number };
+    const attempts: Attempt[] = [
+      { model: GROQ_MODEL, includeBias: true,  backoffMs: 0 },     // 1. turbo + prompt
+      { model: GROQ_MODEL, includeBias: true,  backoffMs: 2000 },  // 2. retry on 5xx
+      { model: GROQ_MODEL, includeBias: true,  backoffMs: 5000 },  // 3. retry again
+      { model: GROQ_MODEL, includeBias: false, backoffMs: 1000 },  // 4. drop prompt
+      { model: "whisper-large-v3", includeBias: false, backoffMs: 1000 }, // 5. non-turbo
+    ];
+
+    let whisperRes: Response | null = null;
+    let lastBody = "";
+    let usedModel = GROQ_MODEL;
+    for (let i = 0; i < attempts.length; i++) {
+      const a = attempts[i];
+      if (a.backoffMs > 0) await new Promise((r) => setTimeout(r, a.backoffMs));
+      const res = await callGroq(a.model, a.includeBias);
+      if (res.ok) {
+        whisperRes = res;
+        usedModel = a.model;
+        if (i > 0) {
+          await serverLog("warn", "transcribe.whisper.recovered", {
+            meetingId: args.meetingId, userId: args.userId,
+            attempt: i + 1, model: a.model, includeBias: a.includeBias,
+          });
+        }
+        break;
+      }
+      lastBody = (await res.text()).slice(0, 1000);
+      const isRetryable = res.status >= 500 && res.status < 600;
+      await serverLog(isRetryable ? "warn" : "error", "transcribe.whisper.http_error", {
+        meetingId: args.meetingId, userId: args.userId,
+        attempt: i + 1, model: a.model, includeBias: a.includeBias,
+        status: res.status,
+        biasBytes: a.includeBias && bias ? Buffer.byteLength(bias, "utf8") : 0,
+        body: lastBody,
+      });
+      if (!isRetryable) {
+        // 4xx → no point retrying (auth, rate limit, validation). Fail fast.
+        throw new Error(`Groq Whisper error ${res.status}: ${lastBody.slice(0, 500)}`);
+      }
     }
+    if (!whisperRes) {
+      throw new Error(`Groq Whisper failed after ${attempts.length} attempts. Last body: ${lastBody.slice(0, 500)}`);
+    }
+
     const whisperResult = (await whisperRes.json()) as { text: string; duration?: number };
     const rawTranscript = (whisperResult.text || "").trim();
     const durationSec = Math.round(whisperResult.duration ?? 0);
 
     logUsage({
-      userId: args.userId, provider: "groq", operation: "transcribe", model: GROQ_MODEL,
+      userId: args.userId, provider: "groq", operation: "transcribe", model: usedModel,
       audioSeconds: durationSec, costUsd: groqWhisperCost(durationSec),
       meta: { meetingId: args.meetingId, filename: args.fileName },
     });

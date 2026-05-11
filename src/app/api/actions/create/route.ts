@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
-import { todayISO } from "@/lib/actionDate";
+import { todayISO, expandActionShorthand } from "@/lib/actionDate";
 import { NextRequest } from "next/server";
 
 /**
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
   const { pageId, content: rawContent } = body as { pageId?: string; content?: string };
 
   const today = todayISO();
-  const actionContent = (rawContent ?? "新しいアクション").trim() || "新しいアクション";
+  const actionContent = expandActionShorthand((rawContent ?? "新しいアクション").trim() || "新しいアクション");
   const actionLine = actionContent.startsWith("!action ") || actionContent.startsWith("!done ")
     ? actionContent
     : `!action ${actionContent}`;
