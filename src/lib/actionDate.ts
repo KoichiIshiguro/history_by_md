@@ -19,6 +19,14 @@
 
 const ACTION_PREFIX_RE = /^!(action|done)(?:@(\S+))?\s+(.*)$/i;
 
+const SHORTHAND_RE = /^=~(?:@(\S+))?\s/;
+
+export function expandActionShorthand(content: string): string {
+  return content.replace(SHORTHAND_RE, (_m, spec?: string) =>
+    spec ? `!action@${spec} ` : "!action "
+  );
+}
+
 export interface ActionMeta {
   isAction: boolean;
   isDone: boolean;

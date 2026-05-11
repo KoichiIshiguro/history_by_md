@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
-import { parseAction, todayISO, normalizeActionDate } from "@/lib/actionDate";
+import { parseAction, todayISO, normalizeActionDate, expandActionShorthand } from "@/lib/actionDate";
 import { scopeVersion } from "@/lib/blockVersion";
 import { NextRequest } from "next/server";
 
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
   // later still means 2026/04/03, not 2027/04/03.
   const scopeDefaultDate = meetingId || pageId ? todayISO() : (date || todayISO());
   for (const b of blocks) {
-    b.content = normalizeActionDate(b.content, scopeDefaultDate);
+    b.content = normalizeActionDate(expandActionShorthand(b.content), scopeDefaultDate);
   }
 
   const { tagResults, pageResults } = computeBlockLinks(blocks);
